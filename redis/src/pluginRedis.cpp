@@ -10,6 +10,11 @@ using ddb::DT_DATETIME;
 using ddb::DT_INT;
 using ddb::DT_RESOURCE;
 using ddb::DT_STRING;
+using ddb::DT_LONG;
+using ddb::DT_DOUBLE;
+using ddb::DT_BOOL;
+using ddb::DT_FLOAT;
+using ddb::DT_NANOTIMESTAMP;
 using ddb::FunctionDefSP;
 using ddb::IllegalArgumentException;
 using ddb::INDEX;
@@ -89,6 +94,17 @@ ConstantSP redisPluginBatchSet(Heap *, const vector<ConstantSP> &args) {
     return redisHandler->redisBatchSet(args);
 }
 
+ConstantSP redisPluginBatchSetPipe(Heap *, const vector<ConstantSP> &args) {
+    checkHandle(args[0]);
+    SmartPointer<RedisConnection> redisHandler = REDIS_HANDLE_MAP.safeGet(args[0]);
+    checkHandleValid(redisHandler);
+
+    if (args[1]->isScalar() && args[2]->isScalar()) {
+        return redisHandler->redisRun({args[0], new String("SET"), args[1], args[2]}, "Set");
+    }
+    return redisHandler->redisBatchSetPipe(args);
+}
+
 ConstantSP redisPluginBatchHashSet(Heap *, const vector<ConstantSP> &args) {
     checkHandle(args[0]);
     SmartPointer<RedisConnection> redisHandler = REDIS_HANDLE_MAP.safeGet(args[0]);
@@ -150,4 +166,56 @@ ConstantSP redisBatchGet(Heap *, const vector<ConstantSP> &args) {
     SmartPointer<RedisConnection> redisHandler = REDIS_HANDLE_MAP.safeGet(args[0]);
     checkHandleValid(redisHandler);
     return redisHandler->redisBatchGet(args);
+}
+
+ConstantSP redisPluginTsMAdd(Heap *, const vector<ConstantSP> &args) {
+    checkHandle(args[0]);
+    SmartPointer<RedisConnection> h = REDIS_HANDLE_MAP.safeGet(args[0]);
+    checkHandleValid(h);
+
+    if (args.size() < 4)
+        throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] Usage: tsMAdd(conn, keys, timestamps, values [,batchSize] [,sameSlot]).");
+
+    // keys
+    if (!(args[1]->isVector() && args[1]->getType() == DT_STRING))
+        throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] keys must be STRING vector.");
+
+    // timestamps
+    if (!(args[2]->isVector() && (args[2]->getType() == DT_LONG || args[2]->getType() == DT_NANOTIMESTAMP)))
+        throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] timestamps must be LONG (ms since epoch).");
+
+    // values
+    if (!(args[3]->isVector() && (args[3]->getType() == DT_DOUBLE || args[3]->getType() == DT_FLOAT)))
+        throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] values must be DOUBLE vector.");
+
+    if (args[1]->size() != args[2]->size() || args[1]->size() != args[3]->size())
+        throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] keys, timestamps, values must have the same length.");
+
+    // optional batchSize
+    /*
+    int batchSize = 1024;
+    if (args.size() >= 5) {
+        if (!(args[4]->isScalar() && args[4]->getType() == DT_INT))
+            throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] batchSize must be INT scalar.");
+        batchSize = std::max(1, args[4]->getInt());
+    }
+
+    // optional sameSlot
+    bool sameSlot = true;
+    if (args.size() >= 6) {
+        if (!(args[5]->isScalar() && args[5]->getType() == DT_BOOL))
+            throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] sameSlot must be BOOL scalar.");
+        sameSlot = args[5]->getBool();
+    }
+    */
+    int batchSize = 1024;
+    return h->redisTsMAdd(args[1], args[2], args[3], batchSize);
+}
+
+ConstantSP redisPluginPing(Heap *, const vector<ConstantSP> &args) {
+    checkHandle(args[0]);
+    SmartPointer<RedisConnection> h = REDIS_HANDLE_MAP.safeGet(args[0]);
+    checkHandleValid(h);
+    // Reuse redisRun so we get uniform error handling & reply conversion
+    return h->redisRun({args[0], new String("PING")}, "PING");
 }

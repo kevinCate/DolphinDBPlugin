@@ -16,9 +16,14 @@ class RedisConnection {
 
     ConstantSP redisRun(const vector<ConstantSP> &args, const string& command = "redisRun");
     ConstantSP redisBatchSet(const vector<ConstantSP> &args);
+    ConstantSP redisBatchSetPipe(const vector<ConstantSP> &args);
     ConstantSP redisBatchHashSet(const vector<ConstantSP> &args);
     ConstantSP redisBatchPush(const vector<ConstantSP> &args);
     ConstantSP redisBatchGet(const vector<ConstantSP> &args);
+    ConstantSP redisTsMAdd(const ConstantSP& keysVec,
+                    const ConstantSP& tsVec,
+                    const ConstantSP& valVec,
+                    int batchSize);
 
   private:
     void checkReply(const redisReply *reply, const string &command);
