@@ -1,6 +1,6 @@
-redis,libPluginRedis.so,<version>
+redisPro,libPluginRedisPro.so,3.00.4.0
 redisPluginConnect,connect,system,2,2,0,0,(host, port)
-redisPluginRun,run,system,2,10,0,0,(conn, arg1, [arg2], [arg3], [arg4], [arg5], [arg6], [arg7], [arg8], [arg9])
+redisPluginRun,run,system,2,20,0,0,(conn, arg1, [arg2], [arg3], [arg4], [arg5], [arg6], [arg7], [arg8], [arg9], [arg10], [arg11], [arg12], [arg13], [arg14], [arg15], [arg16], [arg17], [arg18], [arg19])
 redisPluginBatchSet,batchSet,system,3,3,0,0,(conn, key, value)
 redisPluginBatchHashSet,batchHashSet,system,3,3,0,0,(conn, key, fieldData)
 redisPluginRelease,release,system,1,1,0,0,(conn)
@@ -9,3 +9,6 @@ redisGetHandle,getHandle,system,1,1,0,0,(token)
 redisGetHandleStaus,getHandleStatus,system,0,0,0,0,()
 redisBatchPush,batchPush,system,3,4,0,0,(conn, key, value, [rightPush=true])
 redisBatchGet,batchGet,system,2,2,0,0,(conn, key)
+redisPluginBatchSetPipe,batchSetPipe,system,3,3,0,0,(conn, key, value)
+redisPluginTsMAdd,tsMadd,system,4,4,0,0,(conn, key, ts, value)
+redisPluginPing,ping,system,0,0,0,0,()

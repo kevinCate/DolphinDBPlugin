@@ -10,6 +10,8 @@ __pycache__
 *.pyc
 compile_commands.json
 .history
+.clion.source.upload.marker
+cmake-build-debug-ddb-redis-plugin/
 
 # These are not open-source softwares
 AMDHistory

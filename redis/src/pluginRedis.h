@@ -19,5 +19,8 @@ extern "C" ConstantSP redisGetHandle(ddb::Heap *heap, const vector<ConstantSP> &
 extern "C" ConstantSP redisGetHandleStaus(ddb::Heap *heap, const vector<ConstantSP> &args);
 extern "C" ConstantSP redisBatchPush(ddb::Heap *heap, const vector<ConstantSP> &args);
 extern "C" ConstantSP redisBatchGet(ddb::Heap *heap, const vector<ConstantSP> &args);
+extern "C" ConstantSP redisPluginBatchSetPipe(ddb::Heap *heap, const vector<ConstantSP> &args);
+extern "C" ConstantSP redisPluginTsMAdd(ddb::Heap *heap, const std::vector<ConstantSP> &args);
+extern "C" ConstantSP redisPluginPing(Heap*, const std::vector<ConstantSP>&);
 
 #endif
