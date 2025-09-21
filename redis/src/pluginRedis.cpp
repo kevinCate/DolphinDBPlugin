@@ -192,7 +192,6 @@ ConstantSP redisPluginTsMAdd(Heap *, const vector<ConstantSP> &args) {
         throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] keys, timestamps, values must have the same length.");
 
     // optional batchSize
-    /*
     int batchSize = 1024;
     if (args.size() >= 5) {
         if (!(args[4]->isScalar() && args[4]->getType() == DT_INT))
@@ -200,6 +199,7 @@ ConstantSP redisPluginTsMAdd(Heap *, const vector<ConstantSP> &args) {
         batchSize = std::max(1, args[4]->getInt());
     }
 
+    /*
     // optional sameSlot
     bool sameSlot = true;
     if (args.size() >= 6) {
@@ -208,7 +208,6 @@ ConstantSP redisPluginTsMAdd(Heap *, const vector<ConstantSP> &args) {
         sameSlot = args[5]->getBool();
     }
     */
-    int batchSize = 1024;
     return h->redisTsMAdd(args[1], args[2], args[3], batchSize);
 }
 

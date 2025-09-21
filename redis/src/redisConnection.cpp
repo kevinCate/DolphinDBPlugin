@@ -9,27 +9,23 @@ static std::string d2str(double x){
     return std::string(buf, n > 0 ? n : 0);
 }
 
-static long long toMillis(bool isNano, long long v){
-    return isNano ? (v / 1000000LL) : v;
-}
-
-namespace ddb {
-
-    const int BUFFER_SIZE = 1024;
+namespace ddb
+{
+    const int BUFFER_SIZE = 4096;
     const string CONN_ERR = ", this connection cannot be reused and you should release it and create a new connection.";
 
     class RedisReplyGuard {
-      public:
-        RedisReplyGuard(redisReply *r) : reply_(r) {}
+        public:
+            RedisReplyGuard(redisReply *r) : reply_(r) {}
 
-        ~RedisReplyGuard() {
-            if (reply_ != nullptr) {
-                freeReplyObject(reply_);
+            ~RedisReplyGuard() {
+                if (reply_ != nullptr) {
+                    freeReplyObject(reply_);
+                }
             }
-        }
 
-      private:
-        redisReply *reply_ = nullptr;
+        private:
+            redisReply *reply_ = nullptr;
     };
 
     static ConstantSP convertRedisReply(const redisReply *const reply) {
@@ -530,49 +526,51 @@ namespace ddb {
     }
 
     ConstantSP RedisConnection::redisTsMAdd(const ConstantSP& keysVec,
-                                            const ConstantSP& tsVec,
-                                            const ConstantSP& valVec,
-                                            int batchSize) {
-        // 1) 基本校验与线程安全（对齐 batchSetPipe 风格）
-        if (!(keysVec->isVector() && keysVec->getType()==DT_STRING))
+                                        const ConstantSP& tsVec,
+                                        const ConstantSP& valVec,
+                                        int batchSize) {
+        if (!(keysVec->isVector() && keysVec->getType() == DT_STRING))
             throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] keys must be STRING vector.");
-        if (!(tsVec->isVector() && (tsVec->getType()==DT_LONG || tsVec->getType()==DT_NANOTIMESTAMP)))
-            throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] timestamps must be LONG or NANOTIMESTAMP vector.");
-        if (!(valVec->isVector() && (valVec->getType()==DT_DOUBLE || valVec->getType()==DT_FLOAT)))
+
+        const auto tsType  = tsVec->getType();
+        if (!(tsVec->isVector() && (tsType == DT_LONG || tsType == DT_INT)))
+            throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] milliseconds must be in LONG/INT vector.");
+
+        const auto valType = valVec->getType();
+        if (!(valVec->isVector() && (valType == DT_DOUBLE || valType == DT_FLOAT)))
             throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] values must be DOUBLE/FLOAT vector.");
+
         if (keysVec->size()!=tsVec->size() || keysVec->size()!=valVec->size())
             throw IllegalArgumentException(__FUNCTION__, "[Plugin::Redis] keys/timestamps/values must have same length.");
 
         LockGuard<Mutex> guard(&redisMutex_);
 
         const INDEX N = keysVec->size();
-        if (N==0) return new Void();
+        if (N == 0) return new Void();
 
-        // 2) 批参数（完全套用 batchSetPipe 的思路）
-        // - 外层：从 DDB vector 里按 BUFFER_SIZE 拉一段到本地
-        // - 内层：把这一段再切成多条 TS.MADD，每条携带 TUPLES_PER_CMD 个三元组
-        // - 每凑满 PIPE_BATCH 条命令就 drain 一次（和 batchSetPipe 相同）
-        const bool isNanoTs = (tsVec->getType()==DT_NANOTIMESTAMP);
-
-        // “每条 MADD 装多少三元组”
-        const int TUPLES_PER_CMD = std::max(1, batchSize);      // 你也可以限定到 1024/2048 做保守
-        // “每次 drain 几条命令的回复”
-        const int PIPE_BATCH_CMDS = 1024;                       // 对齐 batchSetPipe 中的 1024
+        const int TUPLES_PER_CMD = std::max(1, batchSize);
+        constexpr int PIPE_BATCH_CMDS = 1024;
 
         DolphinString* kb[BUFFER_SIZE];
         long long      tb[BUFFER_SIZE];
         double         vb[BUFFER_SIZE];
 
-        VectorSP kvec = keysVec;
-        VectorSP tsv  = tsVec;
-        VectorSP vvec = valVec;
+        const VectorSP& kvec = keysVec;
+        const VectorSP& tsv  = tsVec;
+        const VectorSP& vvec = valVec;
+
+        std::vector<std::string> holder;
+        std::vector<const char*> argv;
+        std::vector<size_t>      argvlen;
+        holder.reserve(1 + TUPLES_PER_CMD * 3);
+        argv.reserve  (1 + TUPLES_PER_CMD * 3);
+        argvlen.reserve(1 + TUPLES_PER_CMD * 3);
 
         INDEX rest = N;
         INDEX nread = 0;
         int   read  = 0;
 
         for (; rest > 0; nread += read, rest = N - nread) {
-            // 3) 从 DolphinDB 一次拉一段到本地缓冲（同 batchSetPipe）
             if (rest >= BUFFER_SIZE) {
                 kvec->getStringConst(nread, BUFFER_SIZE, kb);
                 tsv ->getLong      (nread, BUFFER_SIZE, tb);
@@ -585,65 +583,56 @@ namespace ddb {
                 read = rest;
             }
 
-            // 4) 对这段数据打成多条 TS.MADD，并 pipeline 追加；到达阈值后统一 drain
             int sentInBatch = 0;
 
-            for (int off = 0; off < read; /*递增见下*/) {
+            for (int off = 0; off < read; ) {
                 const int take = std::min(TUPLES_PER_CMD, read - off);
 
-                // 构建一条 TS.MADD: ["TS.MADD", k1, ts1, v1, ..., kt, tst, vt]
-                std::vector<std::string> holder;
-                holder.reserve(1 + take * 3);
+                holder.clear();
                 holder.emplace_back("TS.MADD");
                 for (int i = 0; i < take; ++i) {
                     holder.emplace_back(kb[off + i]->getString());
-                    holder.emplace_back(std::to_string(toMillis(isNanoTs, tb[off + i])));
+                    holder.emplace_back(std::to_string(tb[off + i]));
                     holder.emplace_back(d2str(vb[off + i]));
                 }
 
-                std::vector<const char*> argv(holder.size());
-                std::vector<size_t>      argvlen(holder.size());
+                argv.resize(holder.size());
+                argvlen.resize(holder.size());
                 for (size_t i = 0; i < holder.size(); ++i) {
                     argv[i]    = holder[i].c_str();
                     argvlen[i] = holder[i].size();
                 }
 
-                if (redisAppendCommandArgv(redisConnect_, (int)argv.size(), argv.data(), argvlen.data()) == REDIS_ERR) {
+                if (redisAppendCommandArgv(redisConnect_, static_cast<int>(argv.size()),
+                                           argv.data(), argvlen.data()) == REDIS_ERR) {
                     throw RuntimeException("[Plugin::Redis] append TS.MADD failed in pipeline");
                 }
                 ++sentInBatch;
                 off += take;
 
-                // 4.1 到达“命令条数”阈值：把这些回复都 drain 掉（完全照搬 batchSetPipe 的 4.2）
                 if (sentInBatch == PIPE_BATCH_CMDS) {
                     for (int k = 0; k < sentInBatch; ++k) {
                         redisReply* reply = nullptr;
-                        if (redisGetReply(redisConnect_, reinterpret_cast<void**>(&reply)) == REDIS_ERR) {
+                        if (redisGetReply(redisConnect_, reinterpret_cast<void**>(&reply)) == REDIS_ERR)
                             throw RuntimeException("[Plugin::Redis] getReply failed in pipeline (TS.MADD)");
-                        }
                         RedisReplyGuard replyGuard(reply);
-                        // 这里只需要检查错误；返回类型通常是 ARRAY（每三元组一个时间戳）
                         checkReply(reply, "TS.MADD");
                     }
                     sentInBatch = 0;
                 }
             }
 
-            // 4.2 把本段最后不足一批的也 drain 掉（照搬 batchSetPipe 的 4.3）
             if (sentInBatch > 0) {
                 for (int k = 0; k < sentInBatch; ++k) {
                     redisReply* reply = nullptr;
-                    if (redisGetReply(redisConnect_, reinterpret_cast<void**>(&reply)) == REDIS_ERR) {
+                    if (redisGetReply(redisConnect_, reinterpret_cast<void**>(&reply)) == REDIS_ERR)
                         throw RuntimeException("[Plugin::Redis] getReply failed in pipeline (TS.MADD)");
-                    }
                     RedisReplyGuard replyGuard(reply);
                     checkReply(reply, "TS.MADD");
                 }
             }
         }
 
-        // 5) 完成（与 batchSetPipe 一致返回风格）
         return new String("tsMAdd finish (pipelined).");
     }
-
 }
