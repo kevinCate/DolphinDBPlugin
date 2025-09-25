@@ -374,3 +374,6 @@ SET(CPACK_PACKAGE_DESCRIPTION "A pure C++ client for Redis, based on hiredis.")
 SET(CPACK_PACKAGE_CONTACT "anonymous")
 SET(CPACK_GENERATOR "DEB")
 INCLUDE(CPack)
+
+add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0) # enable ABI=0
+
