@@ -2,6 +2,16 @@
 target_sources(${PluginName}
         PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/plugin.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/core/ClusterClient.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/core/Globals.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/commands/kv.cpp
+)
+
+target_include_directories(${PluginName}
+        PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}        # src/
+        ${CMAKE_CURRENT_SOURCE_DIR}/core   # src/core/
+        ${CMAKE_CURRENT_SOURCE_DIR}/commands   # src/commands/
 )
 
 # 如果需要额外包含目录，也可以在这里加：
