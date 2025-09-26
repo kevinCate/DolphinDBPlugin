@@ -14,5 +14,5 @@ extern "C" ddb::ConstantSP redisClusterClose(ddb::Heap* heap, const std::vector<
 extern "C" ddb::ConstantSP redisClusterGet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
 extern "C" ddb::ConstantSP redisClusterSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
 extern "C" ddb::ConstantSP redisClusterMget(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
-
+extern "C" ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
 #endif //PLUGIN_H

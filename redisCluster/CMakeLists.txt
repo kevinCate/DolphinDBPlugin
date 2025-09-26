@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(PluginRedisCluster LANGUAGES CXX)
 
 # 统一标准与 PIC（静态库要能进 .so）
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -14,8 +14,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)           # 静态库也用 -fPIC，才能被插件
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/contrib/hiredis
         ${CMAKE_BINARY_DIR}/contrib/hiredis)
 
-# 2) redis-plus-plus：只编静态、C++14、关测试、静态带 PIC
-set(REDIS_PLUS_PLUS_CXX_STANDARD 14 CACHE STRING "" FORCE)
+# 2) redis-plus-plus：只编静态、C++17、关测试、静态带 PIC
+set(REDIS_PLUS_PLUS_CXX_STANDARD 17 CACHE STRING "" FORCE)
 set(REDIS_PLUS_PLUS_BUILD_TEST OFF CACHE BOOL "" FORCE)
 set(REDIS_PLUS_PLUS_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(REDIS_PLUS_PLUS_BUILD_STATIC ON  CACHE BOOL "" FORCE)
@@ -42,7 +42,7 @@ include(../template.cmake)
 # 可选第二个参数为 LOG_NAME（你原宏支持），不需要可不传
 CreatePlugin(PluginRedisCluster)
 
-set_property(TARGET PluginRedisCluster PROPERTY CXX_STANDARD 14)
+set_property(TARGET PluginRedisCluster PROPERTY CXX_STANDARD 17)
 set_property(TARGET PluginRedisCluster PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_compile_options(PluginRedisCluster PRIVATE -Wno-pedantic) # for hiredis third party library

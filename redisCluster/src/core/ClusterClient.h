@@ -7,6 +7,7 @@
 
 #pragma once
 #include "rc_connection.h"
+#include "DolphinDBEverything.h"
 
 class ClusterClient {
 public:
@@ -17,14 +18,17 @@ public:
     void set(const std::string& key, const std::string& val);
     void setex(const std::string& key, const std::string& val, int ttl_sec);
 
-    // 简单 MGET（逐个 get；后续可用 hash tag + pipeline 优化）
-    void mget(const std::vector<std::string>& keys,
-              std::vector<sw::redis::OptionalString>& out);
+    void mget(const std::vector<std::string>& keys, std::vector<sw::redis::OptionalString>& out);
 
     // 预留：hash / list / pipeline ...
     // void hset(...);
     // void lpush(...);
     // void pipelineSet(...);
+
+    // === 新增：批量 HSET（每行多字段），带窗口 & hash-tag 分组，面向 Cluster 优化 ===
+    void batchHashSet(const std::vector<std::string>& keys,
+                      ddb::TableSP fieldData,             // 所有列必须为 STRING
+                      std::size_t batchWin = 2048);
 
 private:
     RedisClusterConn& holder_;

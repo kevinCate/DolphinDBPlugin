@@ -5,6 +5,7 @@ target_sources(${PluginName}
         ${CMAKE_CURRENT_LIST_DIR}/core/ClusterClient.cpp
         ${CMAKE_CURRENT_LIST_DIR}/core/Globals.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/kv.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/commands/hash_batch.cpp
 )
 
 target_include_directories(${PluginName}

@@ -7,19 +7,6 @@
 #include "core/ClusterClient.h"
 #include "core/Globals.h"
 
-// 这些符号在 plugin.cpp 中定义
-//extern const std::string RC_HANDLE_NAME;
-//extern ddb::BackgroundResourceMap<RedisClusterConn> g_rc_map;
-
-// 取句柄 + 校验
-static ddb::SmartPointer<RedisClusterConn> getConn(const ddb::ConstantSP& h){
-    if (h->getType()!=ddb::DT_RESOURCE || h->getString()!=RC_HANDLE_NAME)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "[RedisCluster] first arg must be a redis cluster handle.");
-    auto sp = g_rc_map.safeGet(h);
-    if (sp.isNull()) throw ddb::RuntimeException("[RedisCluster] invalid/expired handle.");
-    return sp;
-}
-
 ddb::ConstantSP ddb_rc_get(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     if (args.size()<2 || !args[1]->isScalar() || args[1]->getType()!=ddb::DT_STRING)
         throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: get(handle, key:string)");

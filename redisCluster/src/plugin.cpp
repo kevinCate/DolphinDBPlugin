@@ -4,6 +4,7 @@
 #include "rc_connection.h"
 #include "commands/kv.h"
 #include "core/Globals.h"
+#include "commands/hash_batch.h"
 
 // 资源名 & 全局句柄表
 //static const std::string HANDLE_NAME = "redis cluster";
@@ -66,3 +67,5 @@ ddb::ConstantSP redisClusterSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>
 
 // mget(handle, keys:stringVector) -> stringVector(可含 NULL)
 ddb::ConstantSP redisClusterMget(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_mget(h, args); }
+
+ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchHashSet(h, args); }
