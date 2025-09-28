@@ -27,7 +27,7 @@ public:
 
     // === 新增：批量 HSET（每行多字段），带窗口 & hash-tag 分组，面向 Cluster 优化 ===
     void batchHashSet(const std::vector<std::string>& keys,
-                      ddb::TableSP fieldData,             // 所有列必须为 STRING
+                      const ddb::TableSP& fieldData,             // 所有列必须为 STRING
                       std::size_t batchWin = 2048);
 
 private:
