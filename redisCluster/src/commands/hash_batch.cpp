@@ -8,7 +8,6 @@
 #include "core/ClusterClient.h"
 #include <string>
 #include <vector>
-#include <algorithm>
 
 using ddb::ConstantSP;
 using ddb::VectorSP;
@@ -33,12 +32,20 @@ ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantS
         throw ddb::IllegalArgumentException(__FUNCTION__, "Argument ids must be STRING VECTOR.");
     if (!args[2]->isTable() || ((ddb::Table*)args[2].get())->getTableType() != ddb::BASICTBL)
         throw ddb::IllegalArgumentException(__FUNCTION__, "Argument fieldData must be a BASIC TABLE.");
-    if (!args[3]->isScalar() || args[3]->getType()!=ddb::DT_INT)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be a INT SCALAR.");
 
-    auto ids = toStdStringVec(args[1]);
-    auto tb  = TableSP(args[2]);
-    auto batchWin = args[3]->getInt();
+    std::size_t batchWin = 2048;  // Ä¬ÈÏÖµ
+    if (args.size() >= 4) {
+        auto &bw = args[3];
+        if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
+            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be an INT SCALAR if provided. Got type=" + ddb::Util::getDataTypeString(bw->getType()) + ", value=" + bw->getString() + ".");
+        }
+        batchWin = static_cast<std::size_t>(bw->getInt());
+        if (batchWin == 0)
+            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be > 0.");
+    }
+
+    const auto ids = toStdStringVec(args[1]);
+    const auto tb  = TableSP(args[2]);
 
     if (static_cast<std::size_t>(tb->size()) != ids.size())
         throw ddb::IllegalArgumentException(__FUNCTION__, "ids and fieldData must have the same number of rows.");

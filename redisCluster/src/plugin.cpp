@@ -27,6 +27,7 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
         conn_opt.password = args[2]->getString();  // 支持 ACL 时也可设置 conn_opt.user
 
     sw::redis::ConnectionPoolOptions pool_opt;
+    pool_opt.wait_timeout = std::chrono::milliseconds(100);
     if (args.size() >= 4 && args[3]->isScalar()) pool_opt.size = std::max(1, args[3]->getInt());
 
     // 可选：读副本
