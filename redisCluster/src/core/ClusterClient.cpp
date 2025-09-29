@@ -14,9 +14,9 @@ static std::string extract_hashtag(const std::string& k){
 }
 
 // DolphinString 取指针与长度的兼容层
-inline const char* ds_data(const ddb::DolphinString& ds){ return ds.c_str(); }
+static const char* ds_data(const ddb::DolphinString& ds){ return ds.c_str(); }
 // 如果你的 DolphinString 有 size()/length()，优先用；这里保守退回到 strlen。
-inline std::size_t ds_size(const ddb::DolphinString& ds){
+static std::size_t ds_size(const ddb::DolphinString& ds){
     const char* p = ds.c_str();
     return std::strlen(p);
 }
@@ -64,7 +64,7 @@ static uint16_t crc16_xmodem(const uint8_t* p, size_t n) noexcept {
     return c;
 }
 // ----- hash tag 提取（只切片，不分配）-----
-inline std::string_view extract_tag_sv(std::string_view v) noexcept {
+static std::string_view extract_tag_sv(std::string_view v) noexcept {
     const size_t l = v.find('{');
     if (l == std::string_view::npos) return {};
     const size_t r = v.find('}', l + 1);
@@ -73,31 +73,35 @@ inline std::string_view extract_tag_sv(std::string_view v) noexcept {
 }
 
 // 有 tag 用 tag；否则用整 key
-inline std::string_view hash_basis(std::string_view k) noexcept {
+static std::string_view hash_basis(std::string_view k) noexcept {
     const std::string_view t = extract_tag_sv(k);
     return t.empty() ? k : t;
 }
 
 // 计算 Redis Cluster 槽位
-inline int key_slot(std::string_view key) noexcept {
+static int key_slot(std::string_view key) noexcept {
     const auto base = hash_basis(key);
     return crc16_xmodem(reinterpret_cast<const uint8_t*>(base.data()), base.size()) % 16384;
 }
 
- sw::redis::OptionalString ClusterClient::get(const std::string& key){
+ sw::redis::OptionalString ClusterClient::get(const std::string& key) const
+ {
     return holder_.get().get(key);
 }
 
-void ClusterClient::set(const std::string& key, const std::string& val){
+void ClusterClient::set(const std::string& key, const std::string& val) const
+{
     holder_.get().set(key, val);
 }
 
-void ClusterClient::setex(const std::string& key, const std::string& val, int ttl_sec){
+void ClusterClient::setex(const std::string& key, const std::string& val, int ttl_sec) const
+{
     holder_.get().setex(key, std::chrono::seconds(ttl_sec), val);
 }
 
 void ClusterClient::mget(const std::vector<std::string>& keys,
-                         std::vector<sw::redis::OptionalString>& out) {
+                         std::vector<sw::redis::OptionalString>& out) const
+{
     out.clear();
     out.resize(keys.size());
     if (keys.empty()) return;
@@ -150,8 +154,9 @@ void ClusterClient::mget(const std::vector<std::string>& keys,
 
 void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
                                  const ddb::TableSP& fieldData,
-                                 std::size_t batchWin) {
-    const std::size_t N = static_cast<std::size_t>(fieldData->size());
+                                 std::size_t batchWin) const
+{
+    const auto N = static_cast<std::size_t>(fieldData->size());
     if (keys.size() != N)
         throw ddb::IllegalArgumentException("batchHashSet", "keys and fieldData must have same number of rows");
 
@@ -168,7 +173,7 @@ void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
         if (cols[c]->getType() != ddb::DT_STRING)
             throw ddb::RuntimeException("[Plugin::RedisCluster] fieldData columns must be STRING");
         // String 列：直接拿到底层数组指针（最快 & 稳）
-        colData[c] = reinterpret_cast<ddb::DolphinString*>(cols[c]->getDataArray());
+        colData[c] = static_cast<ddb::DolphinString*>(cols[c]->getDataArray());
         if (!colData[c]) // 极端情况下返回空指针时，要兜底
             throw ddb::RuntimeException("[Plugin::RedisCluster] getDataArray() returned null for STRING column");
     }

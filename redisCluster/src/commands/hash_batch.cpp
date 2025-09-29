@@ -25,7 +25,7 @@ static inline std::vector<std::string> toStdStringVec(const VectorSP& sv){
 ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     // args[0] = handle, args[1] = STRING vector (keys), args[2] = TABLE (all STRING)
     if (args.size() < 3)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE)");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE, batchWin:INT SCALAR)");
 
     // 句柄检查
     auto conn = getConn(args[0]);     // 由 core/Globals.h 提供，返回 SmartPointer<RedisClusterConn>
@@ -33,9 +33,12 @@ ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantS
         throw ddb::IllegalArgumentException(__FUNCTION__, "Argument ids must be STRING VECTOR.");
     if (!args[2]->isTable() || ((ddb::Table*)args[2].get())->getTableType() != ddb::BASICTBL)
         throw ddb::IllegalArgumentException(__FUNCTION__, "Argument fieldData must be a BASIC TABLE.");
+    if (!args[3]->isScalar() || args[3]->getType()!=ddb::DT_INT)
+        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be a INT SCALAR.");
 
     auto ids = toStdStringVec(args[1]);
     auto tb  = TableSP(args[2]);
+    auto batchWin = args[3]->getInt();
 
     if (static_cast<std::size_t>(tb->size()) != ids.size())
         throw ddb::IllegalArgumentException(__FUNCTION__, "ids and fieldData must have the same number of rows.");
@@ -47,7 +50,7 @@ ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantS
 
     // 调用核心实现
     ClusterClient cli(*conn);
-    cli.batchHashSet(ids, tb, /*batchWin*/ 1024);
+    cli.batchHashSet(ids, tb, /*batchWin*/ batchWin);
 
     return new ddb::String("batchHashSet finish.");
 }
