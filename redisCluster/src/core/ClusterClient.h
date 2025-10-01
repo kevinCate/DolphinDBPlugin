@@ -29,7 +29,7 @@ public:
     void batchHashSet(const std::vector<std::string>& keys,
                       const ddb::TableSP& fieldData,             // 所有列必须为 STRING
                       std::size_t batchWin = 2048) const;
-    void batchHashSetThread(const std::vector<std::string>& keys, const ddb::TableSP& fieldData, std::size_t batchWin) const;
+    void batchHashSetThread(const std::vector<std::string>& keys, const ddb::TableSP& fieldData, std::size_t batchWin, int numThreads = 3) const;
 
     void deleteKeys(const std::vector<std::string>& keys, std::size_t batchWin, bool useUnlink) const;
 

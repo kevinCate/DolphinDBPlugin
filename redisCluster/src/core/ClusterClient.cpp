@@ -205,40 +205,50 @@ void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
     auto& cluster = holder_.get();
 
     // ---------- 3) 每个 tag 组：pipeline(new_connection=true) + 窗口提交 ----------
+    constexpr std::size_t kMinPipe = 6;
     auto send_group = [&](const std::string& tag, const std::vector<std::size_t>& rows){
         if (rows.empty()) return;
 
-        // 为了稳定性，优先使用 new_connection=true，避免与连接池中其他会话竞争。
-        auto pipe = cluster.pipeline(tag, /*new_connection=*/false);
-
-        // 行内复用容器：<field, value> 对
+        // Reuse this container in both paths
         std::vector<std::pair<sw::redis::StringView, sw::redis::StringView>> fvs;
         fvs.reserve(numCols);
 
         try {
-            for (std::size_t p = 0; p < rows.size(); ) {
-                const std::size_t upto = std::min(rows.size(), p + batchWin);
+         if (rows.size() < kMinPipe) {
+             // Small batch: direct commands (no pipeline)
+             for (std::size_t row : rows) {
+                 fvs.clear();
+                 for (int c = 0; c < numCols; ++c) {
+                     const ddb::DolphinString& ds = colData[c][row];
+                     const char* vptr = ds_data(ds);
+                     const std::size_t vlen = ds_size(ds);
+                     fvs.emplace_back(fnames[c], sw::redis::StringView(vptr, vlen));
+                 }
+                 cluster.hset(keys[row], fvs.begin(), fvs.end());
+             }
+             return;
+         }
 
-                for (; p < upto; ++p) {
-                    const std::size_t row = rows[p];
-                    fvs.clear();
-
-                    // 直接用 colData[c][row] -> DolphinString
-                    for (int c = 0; c < numCols; ++c) {
-                        const ddb::DolphinString& ds = colData[c][row];
-                        const char* vptr = ds_data(ds);
-                        const std::size_t vlen = ds_size(ds);
-                        fvs.emplace_back(fnames[c], sw::redis::StringView(vptr, vlen));
-                    }
-                    // 多字段 HSET（你也可以改成 hmset）
-                    pipe.hset(keys[row], fvs.begin(), fvs.end());
-                }
-
-                pipe.exec();  // 提交该窗口
-            }
+         // Large batch: short, windowed pipeline pinned to the tag (single slot)
+         auto pipe = cluster.pipeline(tag, /*new_connection=*/false);
+         for (std::size_t p = 0; p < rows.size(); ) {
+             const std::size_t upto = std::min(rows.size(), p + batchWin);
+             for (; p < upto; ++p) {
+                 const std::size_t row = rows[p];
+                 fvs.clear();
+                 for (int c = 0; c < numCols; ++c) {
+                     const ddb::DolphinString& ds = colData[c][row];
+                     const char* vptr = ds_data(ds);
+                     const std::size_t vlen = ds_size(ds);
+                     fvs.emplace_back(fnames[c], sw::redis::StringView(vptr, vlen));
+                 }
+                 pipe.hset(keys[row], fvs.begin(), fvs.end());
+             }
+             pipe.exec();
+         }
         } catch (const std::exception& e) {
-            throw ddb::RuntimeException(
-                std::string("[Plugin::RedisCluster] batchHashSet pipeline(tag=") + tag + ") failed: " + e.what());
+         throw ddb::RuntimeException(
+             std::string("[Plugin::RedisCluster] batchHashSet pipeline(tag=") + tag + ") failed: " + e.what());
         }
     };
 
@@ -257,7 +267,6 @@ void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
     }
 
     // 阈值：小于此值走直发，避免 pipeline 固定成本
-    constexpr size_t kMinPipe = 6;  // 可调 4~12
     std::vector<std::pair<std::string_view, std::string_view>> fvs;
     fvs.reserve(numCols);
 
@@ -300,10 +309,10 @@ void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
     }
 }
 
-// ClusterClient.cpp # TODO: 配置线程数
 void ClusterClient::batchHashSetThread(const std::vector<std::string>& keys,
                                  const ddb::TableSP& fieldData,
-                                 std::size_t batchWin) const
+                                 std::size_t batchWin,
+                                 int numThreads) const
 {
     const auto N = static_cast<std::size_t>(fieldData->size());
     if (keys.size() != N)
@@ -377,7 +386,16 @@ void ClusterClient::batchHashSetThread(const std::vector<std::string>& keys,
     // ---- 4) 线程并发度：不超过硬件并发和任务数（也可做配置）----
     auto& rc = holder_.get(); // RedisCluster
     const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
-    const int threads = static_cast<int>(std::min<std::size_t>(hw, !tasks.empty() ? 3 : 1));
+
+    // sanitize requested threads; default to 3 if <= 0
+    int desired = (numThreads <= 0 ? 3 : numThreads);
+    int threads = std::max(1, std::min<int>(desired, static_cast<int>(hw)));
+
+    if (!tasks.empty())
+        threads = std::min<int>(threads, static_cast<int>(tasks.size()));
+    else
+        threads = 1;
+
     std::vector<std::vector<BucketTask>> shards(threads);
     for (std::size_t i = 0; i < tasks.size(); ++i)
         shards[i % threads].emplace_back(std::move(tasks[i]));
@@ -386,21 +404,21 @@ void ClusterClient::batchHashSetThread(const std::vector<std::string>& keys,
     auto spKeys = std::make_shared<const std::vector<std::string>>(keys);
     auto spNames= std::make_shared<const std::vector<std::string>>(*fieldNames);
 
-     std::vector<ddb::ThreadSP> ths;
-     ths.reserve(tasks.size()); // 精确容量
+    std::vector<ddb::ThreadSP> ths;
+    ths.reserve(tasks.size()); // 精确容量
 
-     for (int i = 0; i < threads; ++i) {
-         for (auto &task : shards[i]) {
-             // 交由 Thread 接管生命周期；本地不再持有“可析构所有权”
-             auto* w = new RCSetWorker(rc, spKeys, spNames, colData,
-                                              numCols, batchWin,
-                                              std::move(task.rows), task.routeKey, kMinPipe);
-             ddb::ThreadSP t = new ddb::Thread(w);   // 唯一所有者
-             if (!t->isStarted()) t->start();
-             ths.emplace_back(std::move(t));
-         }
-     }
-     for (auto &t : ths) t->join();  // 线程收尾时会正确清理 runnable
+    for (int i = 0; i < threads; ++i) {
+        for (auto &task : shards[i]) {
+            // 交由 Thread 接管生命周期；本地不再持有“可析构所有权”
+            auto* w = new RCSetWorker(rc, spKeys, spNames, colData,
+                                          numCols, batchWin,
+                                          std::move(task.rows), task.routeKey, kMinPipe);
+            ddb::ThreadSP t = new ddb::Thread(w);   // 唯一所有者
+            if (!t->isStarted()) t->start();
+            ths.emplace_back(std::move(t));
+        }
+    }
+    for (auto &t : ths) t->join();  // 线程收尾时会正确清理 runnable
 }
 
 void ClusterClient::deleteKeys(const std::vector<std::string>& keys,

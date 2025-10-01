@@ -75,6 +75,8 @@ ddb::ConstantSP ddb_rc_batchHashSetThread(ddb::Heap*, const std::vector<ddb::Con
         throw ddb::IllegalArgumentException(__FUNCTION__, "Argument fieldData must be a BASIC TABLE.");
 
     std::size_t batchWin = 2048;  // 默认值
+    int numThreads = 3;
+
     if (args.size() >= 4) {
         auto &bw = args[3];
         if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
@@ -83,6 +85,16 @@ ddb::ConstantSP ddb_rc_batchHashSetThread(ddb::Heap*, const std::vector<ddb::Con
         batchWin = static_cast<std::size_t>(bw->getInt());
         if (batchWin == 0)
             throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be > 0.");
+    }
+
+    if (args.size() >= 5) {
+        auto &nt = args[4];
+        if (!nt->isScalar() || nt->getType() != ddb::DT_INT) {
+            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument numThreads must be an INT SCALAR if provided. Got type=" + ddb::Util::getDataTypeString(nt->getType()) + ", value=" + nt->getString() + ".");
+        }
+        numThreads = nt->getInt();
+        if (numThreads <= 0)
+            numThreads = 3; // fallback to default
     }
 
     const auto ids = toStdStringVec(args[1]);
@@ -98,7 +110,7 @@ ddb::ConstantSP ddb_rc_batchHashSetThread(ddb::Heap*, const std::vector<ddb::Con
 
     // 调用核心实现
     ClusterClient cli(*conn);
-    cli.batchHashSetThread(ids, tb, /*batchWin*/ batchWin);
+    cli.batchHashSetThread(ids, tb, /*batchWin*/ batchWin, /*numThreads*/ numThreads);
 
     return new ddb::String("batchHashSet finish.");
 }
