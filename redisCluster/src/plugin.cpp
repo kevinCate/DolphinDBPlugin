@@ -70,3 +70,7 @@ ddb::ConstantSP redisClusterSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>
 ddb::ConstantSP redisClusterMget(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_mget(h, args); }
 
 ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchHashSet(h, args); }
+
+ddb::ConstantSP redisClusterBatchHashSetThread(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchHashSetThread(h, args); }
+
+ddb::ConstantSP redisClusterBatchDel(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_deleteKeys(h, args); }

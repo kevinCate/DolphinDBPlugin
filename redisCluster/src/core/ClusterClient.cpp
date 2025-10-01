@@ -84,6 +84,13 @@ static int key_slot(std::string_view key) noexcept {
     return crc16_xmodem(reinterpret_cast<const uint8_t*>(base.data()), base.size()) % 16384;
 }
 
+// --------------------- 任务定义 ---------------------
+struct BucketTask {
+    std::string routeKey;           // 有 tag: tag；无 tag: 代表 key 或空（仅用于 pipeline 的路由）
+    std::vector<size_t> rows;       // 负责的行号
+    bool usePipeline = false;       // 大桶用 pipeline，小桶直发
+};
+
  sw::redis::OptionalString ClusterClient::get(const std::string& key) const
  {
     return holder_.get().get(key);
@@ -271,7 +278,8 @@ void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
         } else {
             // 大组：开短 pipeline（不传 tag，但全是同槽，不会触发 MOVED）
             // 这里传 *一个* 代表 key 的 tag/基串也可，但对无 tag 情况传空即可：
-            auto pipe = cluster.pipeline(/*hash_tag=*/"", /*new_connection=*/false);
+            const auto& routeKey = keys[rows.front()];  // representative key of this slot
+            auto pipe = cluster.pipeline(routeKey, /*new_connection=*/false);
 
             for (size_t p = 0; p < rows.size();) {
                 const size_t upto = std::min(rows.size(), p + batchWin);
@@ -287,6 +295,229 @@ void ClusterClient::batchHashSet(const std::vector<std::string>& keys,
                     pipe.hset(keys[row], fvs.begin(), fvs.end());
                 }
                 pipe.exec(); // 窗口提交
+            }
+        }
+    }
+}
+
+// ClusterClient.cpp # TODO: 配置线程数
+void ClusterClient::batchHashSetThread(const std::vector<std::string>& keys,
+                                 const ddb::TableSP& fieldData,
+                                 std::size_t batchWin) const
+{
+    const auto N = static_cast<std::size_t>(fieldData->size());
+    if (keys.size() != N)
+        throw ddb::IllegalArgumentException(__FUNCTION__, "keys and fieldData must have same number of rows");
+    const int numCols = fieldData->columns();
+    if (numCols <= 0) return;
+
+    // ---- 1) 读列名与零拷贝列数据（一次性）----
+    auto fieldNames = std::make_shared<std::vector<std::string>>(numCols);
+    auto cols       = std::vector<ddb::VectorSP>(numCols);
+    auto colData    = std::make_shared<std::vector<ddb::DolphinString*>>(numCols, nullptr);
+    for (int c = 0; c < numCols; ++c) {
+        (*fieldNames)[c] = fieldData->getColumnName(c);
+        cols[c] = fieldData->getColumn(c);
+        if (cols[c]->getType() != ddb::DT_STRING)
+            throw ddb::RuntimeException("[Plugin::RedisCluster] fieldData columns must be STRING");
+        (*colData)[c] = static_cast<ddb::DolphinString*>(cols[c]->getDataArray());
+        if (!(*colData)[c])
+            throw ddb::RuntimeException("[Plugin::RedisCluster] getDataArray() returned null");
+    }
+
+    // ---- 2) 按 tag 分两类：有 tag 组（tag -> rows），无 tag 列表 ----
+    struct TagBucket { std::vector<std::size_t> rows; };
+    std::unordered_map<std::string, TagBucket> tagged;
+    std::vector<std::size_t> noTag;
+    tagged.reserve(N); noTag.reserve(N);
+
+    for (std::size_t i = 0; i < N; ++i) {
+        auto t = extract_hashtag(keys[i]);
+        if (t.empty()) noTag.push_back(i);
+        else           tagged[t].rows.push_back(i);
+    }
+
+    // ---- 3) 生成任务列表：有 tag 的一组一个任务；无 tag 的按顺序切块 ----
+    constexpr std::size_t kMinPipe = 6;                            // 小组直发阈值
+    const std::size_t chunk = std::max<std::size_t>(batchWin, kMinPipe); // 无 tag 切块大小
+
+    std::vector<BucketTask> tasks;
+    tasks.reserve(tagged.size() + (noTag.size() + chunk - 1) / chunk);
+
+    // A) tagged groups -> one task each
+    for (auto &kv : tagged) {
+        if (kv.second.rows.empty()) continue;
+        BucketTask t;
+        t.routeKey   = kv.first;           // 用 tag 当作 routeKey（同槽）
+        t.rows       = std::move(kv.second.rows);
+        t.usePipeline= true;
+        tasks.emplace_back(std::move(t));
+    }
+
+    // B) **no tag** -> group by SLOT first
+    struct SlotBucket { std::vector<std::size_t> rows; };
+    std::unordered_map<int, SlotBucket> by_slot;
+    by_slot.reserve(noTag.size());
+    for (std::size_t i : noTag) {
+        const int slot = key_slot(std::string_view{keys[i]});
+        by_slot[slot].rows.push_back(i);
+    }
+
+    for (auto &kv : by_slot) {
+        auto &rows = kv.second.rows;
+        if (rows.empty()) continue;
+        BucketTask t;
+        t.rows        = std::move(rows);
+        t.usePipeline = (t.rows.size() >= kMinPipe);
+        // bind pipeline to a representative **key** so redis-plus-plus pins to the slot
+        t.routeKey    = keys[t.rows.front()];
+        tasks.emplace_back(std::move(t));
+    }
+
+    // ---- 4) 线程并发度：不超过硬件并发和任务数（也可做配置）----
+    auto& rc = holder_.get(); // RedisCluster
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const int threads = static_cast<int>(std::min<std::size_t>(hw, !tasks.empty() ? 3 : 1));
+    std::vector<std::vector<BucketTask>> shards(threads);
+    for (std::size_t i = 0; i < tasks.size(); ++i)
+        shards[i % threads].emplace_back(std::move(tasks[i]));
+
+    // ---- 5) 启线程（DolphinDB ThreadSP），每个线程串行处理自己的任务片 ----
+    auto spKeys = std::make_shared<const std::vector<std::string>>(keys);
+    auto spNames= std::make_shared<const std::vector<std::string>>(*fieldNames);
+
+     std::vector<ddb::ThreadSP> ths;
+     ths.reserve(tasks.size()); // 精确容量
+
+     for (int i = 0; i < threads; ++i) {
+         for (auto &task : shards[i]) {
+             // 交由 Thread 接管生命周期；本地不再持有“可析构所有权”
+             auto* w = new RCSetWorker(rc, spKeys, spNames, colData,
+                                              numCols, batchWin,
+                                              std::move(task.rows), task.routeKey, kMinPipe);
+             ddb::ThreadSP t = new ddb::Thread(w);   // 唯一所有者
+             if (!t->isStarted()) t->start();
+             ths.emplace_back(std::move(t));
+         }
+     }
+     for (auto &t : ths) t->join();  // 线程收尾时会正确清理 runnable
+}
+
+void ClusterClient::deleteKeys(const std::vector<std::string>& keys,
+                               std::size_t batchWin,
+                               bool useUnlink) const
+{
+    if (keys.empty()) return;
+
+    auto& rc = holder_.get();
+
+    // ---- fast path: all keys share SAME non-empty hash tag -> single-slot
+    const std::string tag0 = extract_hashtag(keys[0]);
+    bool all_same_tag = !tag0.empty();
+    for (size_t i = 1; i < keys.size() && all_same_tag; ++i)
+        if (extract_hashtag(keys[i]) != tag0) all_same_tag = false;
+
+    // small buckets -> one multi-key cmd; big buckets -> short pipeline
+    constexpr std::size_t kMinPipe = 6;  // keep consistent with batchHashSet
+
+    auto do_window_cmd = [&](auto first, auto last){
+        if (useUnlink) rc.unlink(first, last);
+        else           rc.del(first, last);
+    };
+
+    if (all_same_tag) {
+        const size_t n = keys.size();
+        if (n < kMinPipe) {
+            for (size_t p = 0; p < n; p += batchWin) {
+                const size_t upto = std::min(n, p + batchWin);
+                do_window_cmd(keys.begin() + p, keys.begin() + upto);
+            }
+        } else {
+            // bind pipeline to tag so all ops go to the same slot/node
+            auto pipe = rc.pipeline(tag0, /*new_connection=*/false);
+            for (size_t p = 0; p < n; ) {
+                const size_t upto = std::min(n, p + batchWin);
+                for (; p < upto; ++p) {
+                    if (useUnlink) pipe.unlink(keys[p]);
+                    else           pipe.del(keys[p]);
+                }
+                pipe.exec();
+            }
+        }
+        return;
+    }
+
+    // ---- mixed case: group by tag; no-tag -> group by slot
+    struct Bucket { std::vector<size_t> idx; };
+    std::unordered_map<std::string, Bucket> by_tag;
+    std::vector<size_t> no_tag;
+    by_tag.reserve(keys.size()); no_tag.reserve(keys.size());
+
+    for (size_t i = 0; i < keys.size(); ++i) {
+        std::string t = extract_hashtag(keys[i]);
+        if (t.empty()) no_tag.push_back(i);
+        else           by_tag[t].idx.push_back(i);
+    }
+
+    // -- tagged buckets (already same slot by definition) --
+    for (auto &kv : by_tag) {
+        auto &rows = kv.second.idx;
+        if (rows.empty()) continue;
+        if (rows.size() < kMinPipe) {
+            for (size_t p = 0; p < rows.size(); p += batchWin) {
+                const size_t upto = std::min(rows.size(), p + batchWin);
+                // build contiguous window of keys
+                std::vector<std::string> win; win.reserve(upto - p);
+                for (size_t j = p; j < upto; ++j) win.emplace_back(keys[rows[j]]);
+                do_window_cmd(win.begin(), win.end());
+            }
+        } else {
+            auto pipe = rc.pipeline(kv.first, /*new_connection=*/false);
+            for (size_t p = 0; p < rows.size(); ) {
+                const size_t upto = std::min(rows.size(), p + batchWin);
+                for (; p < upto; ++p) {
+                    const auto &k = keys[rows[p]];
+                    if (useUnlink) pipe.unlink(k);
+                    else           pipe.del(k);
+                }
+                pipe.exec();
+            }
+        }
+    }
+
+    // -- no-tag: group by SLOT to avoid CROSSSLOT; optionally short pipeline
+    struct SlotBucket { std::vector<size_t> idx; };
+    std::unordered_map<int, SlotBucket> by_slot;
+    by_slot.reserve(no_tag.size());
+
+    for (size_t i : no_tag) {
+        const int slot = key_slot(std::string_view{keys[i]});
+        by_slot[slot].idx.push_back(i);
+    }
+
+    for (auto &kv : by_slot) {
+        auto &rows = kv.second.idx;
+        if (rows.empty()) continue;
+
+        if (rows.size() < kMinPipe) {
+            for (size_t p = 0; p < rows.size(); p += batchWin) {
+                const size_t upto = std::min(rows.size(), p + batchWin);
+                std::vector<std::string> win; win.reserve(upto - p);
+                for (size_t j = p; j < upto; ++j) win.emplace_back(keys[rows[j]]);
+                do_window_cmd(win.begin(), win.end());
+            }
+        } else {
+            // same-slot group -> safe to send via one connection
+            const auto& routeKey = keys[rows.front()];  // representative key of this slot
+            auto pipe = rc.pipeline(routeKey, /*new_connection=*/false);
+            for (size_t p = 0; p < rows.size(); ) {
+                const size_t upto = std::min(rows.size(), p + batchWin);
+                for (; p < upto; ++p) {
+                    const auto &k = keys[rows[p]];
+                    if (useUnlink) pipe.unlink(k);
+                    else           pipe.del(k);
+                }
+                pipe.exec();
             }
         }
     }
