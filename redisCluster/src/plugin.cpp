@@ -43,10 +43,10 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
         else
             cluster = std::make_unique<sw::redis::RedisCluster>(conn_opt);
 
-        ddb::SmartPointer<RedisClusterConn> conn = new RedisClusterConn(std::move(cluster), conn_opt.host + ":" + std::to_string(conn_opt.port));
+        ddb::SmartPointer<rc::RedisClusterConn> conn = new rc::RedisClusterConn(std::move(cluster));
         ddb::FunctionDefSP onCloseProc(ddb::Util::createSystemProcedure("redis cluster onClose()", onClose, 1, 1));
-        ddb::ConstantSP handle = ddb::Util::createResource(reinterpret_cast<long long>(conn.get()), RC_HANDLE_NAME, onCloseProc, heap->currentSession());
-        g_rc_map.safeAdd(handle, conn, std::to_string(reinterpret_cast<long long>(conn.get())));
+        ddb::ConstantSP handle = ddb::Util::createResource(reinterpret_cast<long long>(conn.get()), rc::RC_HANDLE_NAME, onCloseProc, heap->currentSession());
+        rc::g_rc_map.safeAdd(handle, conn, std::to_string(reinterpret_cast<long long>(conn.get())));
         return handle;
     } catch (const std::exception& e) {
         throw ddb::RuntimeException(std::string("RedisCluster connect failed: ") + e.what()); // NOLINT(cert-err60-cpp)
@@ -54,9 +54,9 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
 }
 
 ddb::ConstantSP redisClusterClose(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
-    if (args.empty() || args[0]->getType()!=ddb::DT_RESOURCE || args[0]->getString()!=RC_HANDLE_NAME)
+    if (args.empty() || args[0]->getType()!=ddb::DT_RESOURCE || args[0]->getString()!=rc::RC_HANDLE_NAME)
         throw ddb::IllegalArgumentException(__FUNCTION__, "First argument must be a redis cluster handle."); // NOLINT(cert-err60-cpp)
-    g_rc_map.safeRemove(args[0]);
+    rc::g_rc_map.safeRemove(args[0]);
     return new ddb::String("ok");
 }
 

@@ -7,21 +7,20 @@
 
 #pragma once
 #include <memory>
-#include <string>
 #include "sw/redis++/redis++.h"
+
+namespace rc {
 
 class RedisClusterConn {
 public:
-    explicit RedisClusterConn(std::unique_ptr<sw::redis::RedisCluster> cluster,
-                              std::string seed)
-    : cluster_(std::move(cluster)), seed_(std::move(seed)) {}
+    explicit RedisClusterConn(std::unique_ptr<sw::redis::RedisCluster> cluster)
+    : cluster_(std::move(cluster)) {}
 
-    sw::redis::RedisCluster& get() { return *cluster_; }
-    const std::string& seed() const { return seed_; }
+    [[nodiscard]] sw::redis::RedisCluster& get() const { return *cluster_; }
 
 private:
     std::unique_ptr<sw::redis::RedisCluster> cluster_;
-    std::string seed_;
 };
 
+}
 #endif //REDISCLUSTERCONNECTION_H

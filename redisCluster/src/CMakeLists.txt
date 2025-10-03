@@ -2,10 +2,12 @@
 target_sources(${PluginName}
         PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/plugin.cpp
-        ${CMAKE_CURRENT_LIST_DIR}/core/ClusterClient.cpp
         ${CMAKE_CURRENT_LIST_DIR}/core/Globals.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/core/Router.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/kv.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/hash_batch.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/services/HashService.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/services/KVService.cpp
 )
 
 target_include_directories(${PluginName}
