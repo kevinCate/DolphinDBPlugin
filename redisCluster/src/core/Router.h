@@ -20,7 +20,7 @@ struct SingleSlotGroup {
 
 // Groups keys into single-slot batches. Tagged keys are grouped by tag first.
 // Untagged keys are grouped by computed slot.
-std::vector<SingleSlotGroup> group_by_single_slot(std::vector<std::string&> keys);
+std::vector<SingleSlotGroup> group_by_single_slot(const std::vector<std::string>& keys);
 
 } // namespace rc
 #endif // ROUTER_H

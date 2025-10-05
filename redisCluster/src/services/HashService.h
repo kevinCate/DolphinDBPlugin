@@ -13,11 +13,10 @@ public:
 	explicit HashService(rc::ConnFacade& conn) : conn_(conn) {}
 
 	void mget(const std::vector<std::string>& keys, std::vector<sw::redis::OptionalString>& out) const;
-	void batchHSet(const std::vector<std::string>& keys, const ddb::TableSP& fieldData) const;
-	void batchHSetThread(const std::vector<std::string>& keys, const ddb::TableSP& fieldData, int numThreads) const;
-	void deleteKeys(const std::vector<std::string>& keys, bool useUnlink) const;
+	void batchHSet(const std::vector<std::string>& keys, const ddb::TableSP& fieldData, int numThreads) const;
+	void deleteKeys(const std::vector<std::string>& keys, bool useUnlink, int numThreads) const;
 private:
-	rc::ConnFacade& conn_;
+	ConnFacade& conn_;
 };
 
 }

@@ -2,9 +2,8 @@
 // Created by uplee on 9/25/25.
 //
 
-// src/commands/hash_batch.cpp
 #include "hash_batch.h"
-#include "core/Globals.h"         // 提供 getConn(...) 或 g_rc_map + 常量
+#include "core/Globals.h"
 #include "services/HashService.h"
 #include "core/ConnFacade.h"
 #include <string>
@@ -17,7 +16,7 @@ using rc::HashService;
 
 namespace {
 
-std::vector<std::string> toStdStringVec(const VectorSP& sv){
+std::vector<std::string> toStdStringVec(const VectorSP& sv) {
     const auto n = sv->size();
     std::vector<std::string> out;
     out.reserve(n);
@@ -25,174 +24,170 @@ std::vector<std::string> toStdStringVec(const VectorSP& sv){
     return out;
 }
 
-}
+} // anonymous
 
-ddb::ConstantSP ddb_rc_mget(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
-    if (args.size()<2 || !args[1]->isVector() || args[1]->getType()!=ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: mget(handle, keys:STRING VECTOR)");
+ddb::ConstantSP ddb_rc_mget(ddb::Heap*, const std::vector<ddb::ConstantSP>& args) {
+    if (args.size() < 2
+        || !args[1]->isVector()
+        || args[1]->getType() != ddb::DT_STRING)
+    {
+        throw ddb::IllegalArgumentException(__FUNCTION__,
+            "Usage: mget(handle, keys:STRING VECTOR)");
+    }
 
     auto conn = rc::getConn(args[0]);
     rc::ConnFacade cf(*conn);
-    const HashService svc(cf);
+    HashService svc(cf);
 
-    ddb::VectorSP in  = ddb::VectorSP(args[1]);
-    const int n  = in->size();
-    std::vector<std::string> keys; keys.reserve(n);
-    for (int i=0;i<n;++i) keys.emplace_back(in->getString(i));
+    VectorSP in = args[1];
+    const int n = in->size();
+    std::vector<std::string> keys;
+    keys.reserve(n);
+    for (int i = 0; i < n; ++i) keys.emplace_back(in->getString(i));
 
     std::vector<sw::redis::OptionalString> vals;
-    try{
+    try {
         svc.mget(keys, vals);
-    }catch(const std::exception& e){
-        throw ddb::RuntimeException(std::string("MGET failed: ")+e.what());
+    } catch (const std::exception& e) {
+        throw ddb::RuntimeException(std::string("MGET failed: ") + e.what());
     }
 
-    ddb::VectorSP out = ddb::Util::createVector(ddb::DT_STRING, n);
-    for (int i=0;i<n;++i){
+    VectorSP out = ddb::Util::createVector(ddb::DT_STRING, n);
+    for (int i = 0; i < n; ++i) {
         if (vals[i]) out->setString(i, *vals[i]);
         else         out->setNull(i);
     }
     return out;
 }
 
-ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
-    // args[0] = handle, args[1] = STRING vector (keys), args[2] = TABLE (all STRING)
+ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args) {
+    // args[0] = handle
+    // args[1] = STRING vector (keys)
+    // args[2] = TABLE (all STRING)
+    // optional args[3] = batchWin (INT SCALAR)
+    // optional args[4] = numThreads (INT SCALAR)
+
     if (args.size() < 3)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE, batchWin:INT SCALAR)");
+        throw ddb::IllegalArgumentException(__FUNCTION__,
+            "Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE, batchWin:INT SCALAR=default, numThreads:INT=1)");
 
-    // 句柄检查
-    auto conn = rc::getConn(args[0]);     // 由 core/Globals.h 提供，返回 SmartPointer<RedisClusterConn>
-    if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument ids must be STRING VECTOR.");
-
-    const auto tb = TableSP(args[2]);   // 智能指针包装
-    if (!tb || tb->getTableType() != ddb::BASICTBL)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument fieldData must be a BASIC TABLE.");
-
-    rc::ConnFacade cf(*conn);
-    std::size_t batchWin = cf.policy().batch_window;  // 默认值
-    if (args.size() >= 4) {
-        auto &bw = args[3];
-        if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
-            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be an INT SCALAR if provided. Got type=" + ddb::Util::getDataTypeString(bw->getType()) + ", value=" + bw->getString() + ".");
-        }
-        batchWin = static_cast<std::size_t>(bw->getInt());
-        if (batchWin == 0)
-            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be > 0.");
+    auto conn = rc::getConn(args[0]);
+    if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING) {
+        throw ddb::IllegalArgumentException(__FUNCTION__,
+            "Argument ids must be STRING VECTOR.");
+    }
+    TableSP tb = TableSP(args[2]);
+    if (!tb || tb->getTableType() != ddb::BASICTBL) {
+        throw ddb::IllegalArgumentException(__FUNCTION__,
+            "Argument fieldData must be a BASIC TABLE.");
     }
 
-    const auto ids = toStdStringVec(args[1]);
-
-    if (static_cast<std::size_t>(tb->size()) != ids.size())
-        throw ddb::IllegalArgumentException(__FUNCTION__, "ids and fieldData must have the same number of rows.");
-
-    // 这里可以做一次快捷检查：全部列必须为 STRING
-    for (int c = 0; c < tb->columns(); ++c)
-        if (tb->getColumn(c)->getType() != ddb::DT_STRING)
-            throw ddb::RuntimeException("[Plugin::RedisCluster] fieldData columns must be STRING.");
-
-    // 调用核心实现
-    cf.setBatchWindow(batchWin);
-    const HashService cli(cf);
-    cli.batchHSet(ids, tb);
-
-    return new ddb::String( "batchHashSet finish.");
-}
-
-ddb::ConstantSP ddb_rc_batchHashSetThread(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
-    // args[0] = handle, args[1] = STRING vector (keys), args[2] = TABLE (all STRING)
-    if (args.size() < 3)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE, batchWin:INT SCALAR)");
-
-    // 句柄检查
-    auto conn = rc::getConn(args[0]);     // 由 core/Globals.h 提供，返回 SmartPointer<RedisClusterConn>
-    if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument ids must be STRING VECTOR.");
-    const auto tb  = TableSP(args[2]);
-    if (!tb || tb->getTableType() != ddb::BASICTBL)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument fieldData must be a BASIC TABLE.");
-
-    // 连接与策略
     rc::ConnFacade cf(*conn);
-    // 从 *policy* 取默认窗口，不在这里硬编码 2048
+
+    // batch window default from policy
     std::size_t batchWin = cf.policy().batch_window;
-    int numThreads = 3;
+    int numThreads = 1;
 
     if (args.size() >= 4) {
         auto &bw = args[3];
         if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
-            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be an INT SCALAR if provided. Got type=" + ddb::Util::getDataTypeString(bw->getType()) + ", value=" + bw->getString() + ".");
+            throw ddb::IllegalArgumentException(__FUNCTION__,
+                "Argument batchWin must be INT SCALAR if provided.");
         }
         batchWin = static_cast<std::size_t>(bw->getInt());
         if (batchWin == 0)
-            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be > 0.");
+            throw ddb::IllegalArgumentException(__FUNCTION__,
+                "Argument batchWin must be > 0.");
     }
 
     if (args.size() >= 5) {
         auto &nt = args[4];
         if (!nt->isScalar() || nt->getType() != ddb::DT_INT) {
-            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument numThreads must be an INT SCALAR if provided. Got type=" + ddb::Util::getDataTypeString(nt->getType()) + ", value=" + nt->getString() + ".");
+            throw ddb::IllegalArgumentException(__FUNCTION__,
+                "Argument numThreads must be INT SCALAR if provided.");
         }
         numThreads = nt->getInt();
-        if (numThreads <= 0)
-            numThreads = 3; // fallback to default
+        if (numThreads < 1) numThreads = 1;  // fallback
     }
 
     const auto ids = toStdStringVec(args[1]);
+    if (static_cast<std::size_t>(tb->size()) != ids.size()) {
+        throw ddb::IllegalArgumentException(__FUNCTION__,
+            "ids and fieldData must have the same number of rows.");
+    }
 
-    if (static_cast<std::size_t>(tb->size()) != ids.size())
-        throw ddb::IllegalArgumentException(__FUNCTION__, "ids and fieldData must have the same number of rows.");
-
-    // 这里可以做一次快捷检查：全部列必须为 STRING
-    for (int c = 0; c < tb->columns(); ++c)
-        if (tb->getColumn(c)->getType() != ddb::DT_STRING)
+    // Check all columns are string
+    for (int c = 0; c < tb->columns(); ++c) {
+        if (tb->getColumn(c)->getType() != ddb::DT_STRING) {
             throw ddb::RuntimeException("[Plugin::RedisCluster] fieldData columns must be STRING.");
+        }
+    }
 
-    // 调用核心实现
-    cf.setBatchWindow(batchWin);             // note: current thread impl uses an internal window, but keep policy in sync
-    cf.setNewConnection(true);               // favor independent connections per worker
-    const HashService svc(cf);
-    svc.batchHSetThread(ids, tb, numThreads);
+    // Set policy
+    cf.setBatchWindow(batchWin);
+    // Optionally, enable new-connection policy or other flags if desired
+    // cf.setNewConnection(true);
 
-    return new ddb::String("batchHSet finish.");
+    HashService svc(cf);
+    svc.batchHSet(ids, tb, numThreads);
+
+    return new ddb::String("batchHashSet finish.");
 }
 
-ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
-    if (args.size() < 2)
+ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>& args) {
+    if (args.size() < 2) {
         throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Usage: deleteKeys(conn, ids:STRING VECTOR, batchWin:INT=2048, useUnlink:BOOL=true)");
+            "Usage: deleteKeys(conn, ids:STRING VECTOR, batchWin:INT=default, useUnlink:BOOL=true, numThreads:INT=1)");
+    }
 
     auto conn = rc::getConn(args[0]);
-
-    if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument ids must be STRING VECTOR.");
+    if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING) {
+        throw ddb::IllegalArgumentException(__FUNCTION__,
+            "Argument ids must be STRING VECTOR.");
+    }
 
     rc::ConnFacade cf(*conn);
+
+    // default values
     std::size_t batchWin = cf.policy().batch_window;
     bool useUnlink = true;
+    int numThreads = 1;
 
     if (args.size() >= 3) {
         auto &bw = args[2];
-        if (!bw->isScalar() || bw->getType() != ddb::DT_INT)
+        if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
                 "Argument batchWin must be INT SCALAR if provided.");
+        }
         batchWin = static_cast<std::size_t>(bw->getInt());
         if (batchWin == 0)
-            throw ddb::IllegalArgumentException(__FUNCTION__, "Argument batchWin must be > 0.");
+            throw ddb::IllegalArgumentException(__FUNCTION__,
+                "Argument batchWin must be > 0.");
     }
     if (args.size() >= 4) {
-        auto &ul = args[3];
-        if (!ul->isScalar() || (ul->getType() != ddb::DT_BOOL && ul->getType() != ddb::DT_INT))
+        auto &nt = args[3];
+        if (!nt->isScalar() || nt->getType() != ddb::DT_INT) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument useUnlink must be BOOL (or INT 0/1).");
+                "Argument numThreads must be INT SCALAR if provided.");
+        }
+        numThreads = nt->getInt();
+        if (numThreads < 1) numThreads = 1;
+    }
+    if (args.size() >= 5) {
+        auto &ul = args[4];
+        if (!ul->isScalar() || (ul->getType() != ddb::DT_BOOL && ul->getType() != ddb::DT_INT)) {
+            throw ddb::IllegalArgumentException(__FUNCTION__,
+                "Argument useUnlink must be BOOL or INT.");
+        }
         useUnlink = ul->getBool();
     }
 
     const auto ids = toStdStringVec(args[1]);
 
     cf.setBatchWindow(batchWin);
+
     HashService svc(cf);
-    svc.deleteKeys(ids, useUnlink);
+    svc.deleteKeys(ids, useUnlink, numThreads);
 
     return new ddb::String("deleteKeys finish.");
 }

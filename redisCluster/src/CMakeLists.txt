@@ -4,6 +4,7 @@ target_sources(${PluginName}
         ${CMAKE_CURRENT_LIST_DIR}/plugin.cpp
         ${CMAKE_CURRENT_LIST_DIR}/core/Globals.cpp
         ${CMAKE_CURRENT_LIST_DIR}/core/Router.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/core/RedisTaskDispatcher.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/kv.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/hash_batch.cpp
         ${CMAKE_CURRENT_LIST_DIR}/services/HashService.cpp
