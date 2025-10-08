@@ -5,6 +5,8 @@
 #include "commands/kv.h"
 #include "core/Globals.h"
 #include "commands/hash_batch.h"
+#include "commands/run.h"
+
 
 // 资源名 & 全局句柄表
 //static const std::string HANDLE_NAME = "redis cluster";
@@ -72,3 +74,6 @@ ddb::ConstantSP redisClusterMget(ddb::Heap* h, const std::vector<ddb::ConstantSP
 ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchHashSet(h, args); }
 
 ddb::ConstantSP redisClusterBatchDel(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_deleteKeys(h, args); }
+
+ddb::ConstantSP redisClusterRun(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_run(h, args); }
+

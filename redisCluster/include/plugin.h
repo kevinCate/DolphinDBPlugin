@@ -16,5 +16,6 @@ extern "C" ddb::ConstantSP redisClusterSet(ddb::Heap*, const std::vector<ddb::Co
 extern "C" ddb::ConstantSP redisClusterMget(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
 extern "C" ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
 extern "C" ddb::ConstantSP redisClusterBatchDel(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
+extern "C" ddb::ConstantSP redisClusterRun(ddb::Heap*, const std::vector<ddb::ConstantSP>& args);
 
 #endif //PLUGIN_H
