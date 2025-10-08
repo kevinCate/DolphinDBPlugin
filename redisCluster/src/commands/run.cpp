@@ -79,7 +79,7 @@ ConstantSP ddb_rc_run(ddb::Heap*, const std::vector<ddb::ConstantSP>& args) {
     std::vector<std::string> cmd;
     parse_route_and_command(/*routeArg*/ args[1], /*cmdVec*/ args[2], routeKey, cmd);
 
-    rc::RunService svc(cf);
+    const rc::RunService svc(cf);
     try {
         return svc.run(routeKey, cmd);
     } catch (const std::exception& e) {

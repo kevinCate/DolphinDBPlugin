@@ -10,5 +10,6 @@
 
 ddb::ConstantSP ddb_rc_get(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 ddb::ConstantSP ddb_rc_set(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
+ddb::ConstantSP ddb_rc_batchSet(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 
 #endif //DDB_REDIS_CLUSTER_COMMANDS_KV_H_

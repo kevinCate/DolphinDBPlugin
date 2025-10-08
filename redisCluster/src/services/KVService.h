@@ -8,21 +8,22 @@
 // KVService.h
 #pragma once
 #include "core/ConnFacade.h"
-#include "core/PipelinePolicy.h"
 #include <string>
 
 namespace rc {
 
 class KVService {
+
 public:
     explicit KVService(rc::ConnFacade& conn): conn_(conn) {}
 
     [[nodiscard]] sw::redis::OptionalString get(const std::string& key) const;
     void set(const std::string& key, const std::string& val) const;
     void setex(const std::string& key, const std::string& val, int ttl_sec) const;
+    void batchSet(std::vector<std::string> keys, std::vector<std::string> values, int numThreads) const;
 
 private:
-    rc::ConnFacade& conn_;
+    ConnFacade& conn_;
 };
 
 }

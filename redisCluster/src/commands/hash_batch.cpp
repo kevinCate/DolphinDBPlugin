@@ -37,7 +37,7 @@ ddb::ConstantSP ddb_rc_mget(ddb::Heap*, const std::vector<ddb::ConstantSP>& args
 
     auto conn = rc::getConn(args[0]);
     rc::ConnFacade cf(*conn);
-    HashService svc(cf);
+    const HashService svc(cf);
 
     VectorSP in = args[1];
     const int n = in->size();
@@ -128,7 +128,7 @@ ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantS
     // Optionally, enable new-connection policy or other flags if desired
     // cf.setNewConnection(true);
 
-    HashService svc(cf);
+    const HashService svc(cf);
     svc.batchHSet(ids, tb, numThreads);
 
     return new ddb::String("batchHashSet finish.");
@@ -186,7 +186,7 @@ ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>
 
     cf.setBatchWindow(batchWin);
 
-    HashService svc(cf);
+    const HashService svc(cf);
     svc.deleteKeys(ids, useUnlink, numThreads);
 
     return new ddb::String("deleteKeys finish.");

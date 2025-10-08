@@ -6,6 +6,7 @@
 #include "core/Globals.h"
 #include "commands/hash_batch.h"
 #include "commands/run.h"
+#include "commands/list_batch.h"
 
 // onClose：当 DolphinDB 回收资源时调用
 static void onClose(ddb::Heap*, std::vector<ddb::ConstantSP>&){ /* no-op */ }
@@ -161,3 +162,6 @@ ddb::ConstantSP redisClusterBatchDel(ddb::Heap* h, const std::vector<ddb::Consta
 
 ddb::ConstantSP redisClusterRun(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_run(h, args); }
 
+ddb::ConstantSP redisClusterBatchSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchSet(h, args); }
+
+ddb::ConstantSP redisClusterBatchPush(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchPush(h, args); }

@@ -8,9 +8,11 @@ target_sources(${PluginName}
         ${CMAKE_CURRENT_LIST_DIR}/commands/kv.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/hash_batch.cpp
         ${CMAKE_CURRENT_LIST_DIR}/commands/run.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/commands/list_batch.cpp
         ${CMAKE_CURRENT_LIST_DIR}/services/HashService.cpp
         ${CMAKE_CURRENT_LIST_DIR}/services/KVService.cpp
         ${CMAKE_CURRENT_LIST_DIR}/services/RunService.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/services/ListService.cpp
 )
 
 target_include_directories(${PluginName}
