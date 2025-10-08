@@ -3,7 +3,7 @@
 #define CONNFACADE_H
 #pragma once
 #include "rc_connection.h"
-#include "PipelinePolicy.h"
+#include "core/PipelinePolicy.h"
 #include <sw/redis++/redis++.h>
 
 namespace rc {

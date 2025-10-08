@@ -6,7 +6,8 @@
 #define DDB_REDIS_CLUSTER_COMMANDS_KV_H_
 
 #pragma once
-#include "DolphinDBEverything.h"
+#include "ddbplugin/Plugin.h"
+#include <vector>
 
 ddb::ConstantSP ddb_rc_get(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 ddb::ConstantSP ddb_rc_set(ddb::Heap*, const std::vector<ddb::ConstantSP>&);

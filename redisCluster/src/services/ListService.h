@@ -4,10 +4,11 @@
 
 #ifndef LISTSERVICE_H
 #define LISTSERVICE_H
-
-#include "core/ConnFacade.h"
+#pragma once
 #include <string>
 #include <vector>
+#include "core/ConnFacade.h"
+#include "ddbplugin/Plugin.h"
 
 namespace rc {
 

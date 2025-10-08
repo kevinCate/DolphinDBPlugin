@@ -1,8 +1,7 @@
 #ifndef RUNSERVICE_H
 #define RUNSERVICE_H
 #pragma once
-
-#include "DolphinDBEverything.h"
+#include "ddbplugin/Plugin.h"
 #include "hiredis.h"
 #include <string>
 #include <vector>

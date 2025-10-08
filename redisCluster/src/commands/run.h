@@ -7,7 +7,7 @@
 #define DDB_REDIS_CLUSTER_COMMANDS_RUN_H_
 #pragma once
 
-#include "DolphinDBEverything.h"
+#include "ddbplugin/Plugin.h"
 #include <vector>
 
 // Run a Redis command on a routed node.

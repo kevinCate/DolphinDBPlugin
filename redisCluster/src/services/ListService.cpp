@@ -3,15 +3,14 @@
 //
 
 #include "services/ListService.h"
-#include "core/Router.h"
-#include "RedisTaskDispatcher.h"
-#include <sw/redis++/redis++.h>
 #include <cstring>
+#include "core/Router.h"
+#include "core/RedisTaskDispatcher.h"
+#include <sw/redis++/redis++.h>
+#include "core/Utils.h"
 
-namespace {
-inline const char* ds_ptr(const ddb::DolphinString& ds){ return ds.c_str(); }
-inline std::size_t ds_len(const ddb::DolphinString& ds){ return std::strlen(ds.c_str()); }
-}
+using rc::utils::ds_len;
+using rc::utils::ds_ptr;
 
 namespace rc {
 

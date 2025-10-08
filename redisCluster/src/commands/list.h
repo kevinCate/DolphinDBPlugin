@@ -5,7 +5,7 @@
 #ifndef LIST_BATCH_H
 #define LIST_BATCH_H
 #pragma once
-#include "DolphinDBEverything.h"
+#include "ddbplugin/Plugin.h"
 #include <vector>
 
 // batchPush(conn, keys:STRING VECTOR, vals: VECTOR-of-STRING-VECTOR,

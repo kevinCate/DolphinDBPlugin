@@ -1,12 +1,10 @@
 #include "plugin.h"
-#include "ddbplugin/Plugin.h"
-#include "ddbplugin/PluginLogger.h"
 #include "rc_connection.h"
 #include "commands/kv.h"
 #include "core/Globals.h"
-#include "commands/hash_batch.h"
+#include "commands/batch.h"
 #include "commands/run.h"
-#include "commands/list_batch.h"
+#include "commands/list.h"
 
 // onClose：当 DolphinDB 回收资源时调用
 static void onClose(ddb::Heap*, std::vector<ddb::ConstantSP>&){ /* no-op */ }
@@ -154,7 +152,7 @@ ddb::ConstantSP redisClusterGet(ddb::Heap* h, const std::vector<ddb::ConstantSP>
 ddb::ConstantSP redisClusterSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_set(h,args); }
 
 // mget(handle, keys:stringVector) -> stringVector(可含 NULL)
-ddb::ConstantSP redisClusterMget(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_mget(h, args); }
+ddb::ConstantSP redisClusterBatchGet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchGet(h, args); }
 
 ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchHashSet(h, args); }
 

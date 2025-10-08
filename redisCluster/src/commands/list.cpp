@@ -2,7 +2,7 @@
 // Created by uplee on 10/8/25.
 //
 
-#include "commands/list_batch.h"
+#include "commands/list.h"
 #include "core/ConnFacade.h"
 #include "core/Globals.h"
 #include "services/ListService.h"

@@ -3,7 +3,6 @@
 //
 
 #include "core/Globals.h"
-#include "rc_connection.h"
 
 namespace rc {
 

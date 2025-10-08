@@ -7,6 +7,9 @@
 
 #pragma once
 #include <memory>
+#include <string>
+#include <ctime>
+#include <utility>
 #include "sw/redis++/redis++.h"
 #include "ddbplugin/Plugin.h"
 

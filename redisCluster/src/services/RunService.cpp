@@ -1,7 +1,6 @@
 #include "services/RunService.h"
 #include "core/ConnFacade.h"
 #include <sw/redis++/redis++.h>
-#include "hiredis.h"
 #include <cstring>
 
 using ddb::ConstantSP;

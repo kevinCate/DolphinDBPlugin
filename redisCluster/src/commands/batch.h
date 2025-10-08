@@ -1,12 +1,12 @@
 #ifndef HASH_BATCH_H
 #define HASH_BATCH_H
 
-// src/commands/hash_batch.h
+// src/commands/batch.h
 #pragma once
-#include "DolphinDBEverything.h"
+#include "ddbplugin/Plugin.h"
 #include <vector>
 
-ddb::ConstantSP ddb_rc_mget(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
+ddb::ConstantSP ddb_rc_batchGet(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 

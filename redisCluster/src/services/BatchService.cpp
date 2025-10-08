@@ -1,23 +1,19 @@
-#include "HashService.h"
-#include <sw/redis++/redis++.h>
+#include "services/BatchService.h"
 #include <cstring>
+#include <sw/redis++/redis++.h>
 #include "core/Router.h"
-#include "RedisTaskDispatcher.h"
+#include "core/RedisTaskDispatcher.h"
+#include "core/Utils.h"
 
 using sw::redis::OptionalString;
 using sw::redis::StringView;
-using rc::HashService;
-
-namespace {
-
-const char* ds_ptr(const ddb::DolphinString& ds) { return ds.c_str(); }
-std::size_t ds_len(const ddb::DolphinString& ds) { return std::strlen(ds.c_str()); }
-
-}
+using rc::BatchService;
+using rc::utils::ds_len;
+using rc::utils::ds_ptr;
 
 namespace rc {
 
-void HashService::mget(const std::vector<std::string>& keys,
+void BatchService::batchGet(const std::vector<std::string>& keys,
                        std::vector<OptionalString>& out) const
 {
     // Note: we ignore threading for mget in this option, but grouping is reused
@@ -50,7 +46,43 @@ void HashService::mget(const std::vector<std::string>& keys,
     }
 }
 
-void HashService::batchHSet(const std::vector<std::string>& keys,
+void BatchService::batchSet(std::vector<std::string> keys, std::vector<std::string> values, int numThreads) const
+{
+    const std::size_t N = keys.size();
+    if (N == 0) return;
+    if (values.size() != N)
+        throw ddb::RuntimeException("[Plugin::RedisCluster] keys and values must have same size");
+
+    // route grouping to keep each pipeline bound to a single node
+    auto groups = group_by_single_slot(keys);
+
+    std::vector<CommandTask> tasks;
+    tasks.reserve(N);
+
+    // keep storage alive for lambdas
+    auto spKeys = std::make_shared<std::vector<std::string>>(std::move(keys));
+    auto spVals = std::make_shared<std::vector<std::string>>(std::move(values));
+
+    for (auto& g : groups) {
+        for (auto row : g.rows) {
+            CommandTask t;
+            t.routeKey = g.routeKey;
+
+            t.execDirect = [spKeys, spVals, row](sw::redis::RedisCluster& rcx){
+                rcx.set((*spKeys)[row], (*spVals)[row]);
+            };
+            t.execPiped = [spKeys, spVals, row](sw::redis::Pipeline& pipe){
+                pipe.set((*spKeys)[row], (*spVals)[row]);
+            };
+            tasks.emplace_back(std::move(t));
+        }
+    }
+
+    dispatchCommandTasks(conn_, std::move(tasks), numThreads);
+}
+
+
+void BatchService::batchHSet(const std::vector<std::string>& keys,
     const ddb::TableSP& fieldData,
     int numThreads) const {
 
@@ -139,7 +171,7 @@ void HashService::batchHSet(const std::vector<std::string>& keys,
     dispatchCommandTasks(conn_, std::move(cmdTasks), numThreads);
 }
 
-void HashService::deleteKeys(const std::vector<std::string>& keys,
+void BatchService::deleteKeys(const std::vector<std::string>& keys,
                                  bool useUnlink,
                                  int numThreads) const
 {
