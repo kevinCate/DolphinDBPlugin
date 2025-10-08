@@ -11,6 +11,10 @@ const std::string RC_HANDLE_NAME = "redis cluster";
 
 ddb::BackgroundResourceMap<RedisClusterConn> g_rc_map("[Plugin::RedisCluster] ", RC_HANDLE_NAME);
 
+// definitions
+std::unordered_map<std::string, ddb::ConstantSP> g_token2handle;
+std::mutex g_token_mu;
+
 ddb::SmartPointer<RedisClusterConn> getConn(const ddb::ConstantSP& h){
     if (h->getType()!=ddb::DT_RESOURCE || h->getString()!=RC_HANDLE_NAME)
         throw ddb::IllegalArgumentException(__FUNCTION__, "[RedisCluster] first arg must be a redis cluster handle."); // NOLINT(cert-err60-cpp)

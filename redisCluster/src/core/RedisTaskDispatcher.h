@@ -6,12 +6,7 @@
 #include <string>
 #include <functional>
 #include <memory>
-#include <thread>
-#include <algorithm>
-#include <unordered_map>
-#include "DolphinDBEverything.h"
 #include "core/ConnFacade.h"
-#include "core/Router.h"
 #include <sw/redis++/redis++.h>  // for Pipeline
 
 namespace rc {

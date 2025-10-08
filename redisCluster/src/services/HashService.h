@@ -2,7 +2,6 @@
 #define HASHSERVICE_H
 #pragma once
 #include "core/ConnFacade.h"
-#include "DolphinDBEverything.h"
 #include <string>
 #include <vector>
 

@@ -7,11 +7,6 @@
 #include "commands/hash_batch.h"
 #include "commands/run.h"
 
-
-// 资源名 & 全局句柄表
-//static const std::string HANDLE_NAME = "redis cluster";
-//static ddb::BackgroundResourceMap<RedisClusterConn> g_map("[Plugin::RedisCluster] ", HANDLE_NAME);
-
 // onClose：当 DolphinDB 回收资源时调用
 static void onClose(ddb::Heap*, std::vector<ddb::ConstantSP>&){ /* no-op */ }
 
@@ -45,21 +40,110 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
         else
             cluster = std::make_unique<sw::redis::RedisCluster>(conn_opt);
 
-        ddb::SmartPointer<rc::RedisClusterConn> conn = new rc::RedisClusterConn(std::move(cluster));
+        const std::string address = conn_opt.host + ":" + std::to_string(conn_opt.port);
+        ddb::SmartPointer<rc::RedisClusterConn> conn = new rc::RedisClusterConn(std::move(cluster), address);
         ddb::FunctionDefSP onCloseProc(ddb::Util::createSystemProcedure("redis cluster onClose()", onClose, 1, 1));
         ddb::ConstantSP handle = ddb::Util::createResource(reinterpret_cast<long long>(conn.get()), rc::RC_HANDLE_NAME, onCloseProc, heap->currentSession());
-        rc::g_rc_map.safeAdd(handle, conn, std::to_string(reinterpret_cast<long long>(conn.get())));
+
+        const std::string token = std::to_string(reinterpret_cast<long long>(conn.get()));
+        rc::g_rc_map.safeAdd(handle, conn, token);
+        {
+            std::lock_guard lk(rc::g_token_mu);
+            rc::g_token2handle[token] = handle;
+        }
         return handle;
     } catch (const std::exception& e) {
         throw ddb::RuntimeException(std::string("RedisCluster connect failed: ") + e.what()); // NOLINT(cert-err60-cpp)
     }
 }
 
-ddb::ConstantSP redisClusterClose(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
+ddb::ConstantSP redisClusterRelease(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     if (args.empty() || args[0]->getType()!=ddb::DT_RESOURCE || args[0]->getString()!=rc::RC_HANDLE_NAME)
         throw ddb::IllegalArgumentException(__FUNCTION__, "First argument must be a redis cluster handle."); // NOLINT(cert-err60-cpp)
+    // compute token before removing
+    auto sp = rc::getConn(args[0]);
+    const std::string token = std::to_string(reinterpret_cast<long long>(sp.get()));
+    {
+        std::lock_guard lk(rc::g_token_mu);
+        rc::g_token2handle.erase(token);
+    }
     rc::g_rc_map.safeRemove(args[0]);
     return new ddb::String("ok");
+}
+
+ddb::ConstantSP redisClusterReleaseAll(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
+    if (!args.empty())
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: releaseAll()");
+    rc::g_rc_map.clear();
+    return new ddb::String("ok");
+}
+
+ddb::ConstantSP redisClusterGetHandle(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
+    if (args.size() != 1 || args[0]->getType()!=ddb::DT_STRING || args[0]->isVector())
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: getHandle(token: STRING)");
+
+    const std::string token = args[0]->getString();
+    ddb::ConstantSP handle;
+    {
+        std::lock_guard lk(rc::g_token_mu);
+        auto it = rc::g_token2handle.find(token);
+        if (it == rc::g_token2handle.end())
+            throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] token not found.");
+        handle = it->second;
+    }
+    // validate handle still live
+    auto sp = rc::g_rc_map.safeGet(handle);
+    if (sp.isNull()) {
+        std::lock_guard lk(rc::g_token_mu);
+        rc::g_token2handle.erase(token);
+        throw ddb::RuntimeException("[Plugin::RedisCluster] invalid/expired handle for token.");
+    }
+    return handle;
+}
+
+ddb::ConstantSP redisClusterGetHandleStatus(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
+    if (!args.empty())
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: getHandleStatus()");
+
+    std::vector<std::string> tokens;
+    std::vector<std::string> addrs;
+    std::vector<ddb::DateTime> times;
+
+    {
+        std::lock_guard lk(rc::g_token_mu);
+        for (auto it = rc::g_token2handle.begin(); it != rc::g_token2handle.end(); ) {
+            const std::string& token = it->first;
+            const ddb::ConstantSP& h = it->second;
+            auto sp = rc::g_rc_map.safeGet(h);
+            if (sp.isNull()) {
+                it = rc::g_token2handle.erase(it); // clean stale
+                continue;
+            }
+            tokens.push_back(token);
+            addrs.push_back(sp->getAddress());
+            times.push_back(sp->getCreatedTime());
+            ++it;
+        }
+    }
+
+    const int n = static_cast<int>(tokens.size());
+    ddb::VectorSP colToken = ddb::Util::createVector(ddb::DT_STRING, n, n);
+    ddb::VectorSP colAddr  = ddb::Util::createVector(ddb::DT_STRING, n, n);
+    ddb::VectorSP colTime  = ddb::Util::createVector(ddb::DT_DATETIME, n, n);
+
+    for (int i = 0; i < n; ++i) {
+        colToken->set(i, new ddb::String(tokens[i]));
+        colAddr->set(i,  new ddb::String(addrs[i]));
+        colTime->set(i,  new ddb::DateTime(times[i]));
+    }
+
+    std::vector<ddb::ConstantSP> columns;
+    columns.emplace_back(colToken);
+    columns.emplace_back(colAddr);
+    columns.emplace_back(colTime);
+
+    std::vector<std::string> names = {"token","address","createdTime"};
+    return ddb::Util::createTable(names, columns);
 }
 
 // gGet(handle, key:string) -> string | NULL

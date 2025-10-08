@@ -1,6 +1,9 @@
 redisCluster,libPluginRedisCluster.so,3.00.4.0
 redisClusterConnect,connect,system,2,5,0,0,(host, port, [password=''], [poolSize=1], [readReplica=false])
-redisClusterClose,close,system,1,1,0,0,(conn)
+redisClusterRelease,release,system,1,1,0,0,(conn)
+redisClusterReleaseAll,releaseAll,system,0,0,0,0,()
+redisClusterGetHandle,getHandle,system,1,1,0,0,(token)
+redisClusterGetHandleStatus,getHandleStatus,system,0,0,0,0,()
 redisClusterGet,get,system,2,2,0,0,(conn, key)
 redisClusterSet,set,system,3,4,0,0,(conn, key, value, [ttlSec=0])
 redisClusterMget,mget,system,2,2,0,0,(conn, keys)
