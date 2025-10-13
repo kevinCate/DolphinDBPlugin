@@ -15,7 +15,7 @@ public:
 	void batchGet(const std::vector<std::string>& keys, std::vector<sw::redis::OptionalString>& out) const;
 	void batchSet(std::vector<std::string> keys, std::vector<std::string> values, int numThreads) const;
 	void batchHSet(const std::vector<std::string>& keys, const ddb::TableSP& fieldData, int numThreads) const;
-	void deleteKeys(const std::vector<std::string>& keys, bool useUnlink, int numThreads) const;
+	void batchDel(const std::vector<std::string>& keys, bool useUnlink, int numThreads) const;
 private:
 	ConnFacade& conn_;
 };

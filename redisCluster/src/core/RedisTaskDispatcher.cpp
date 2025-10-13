@@ -16,35 +16,77 @@ namespace rc {
 struct SlotBucket { std::vector<std::size_t> rows; };
 struct TagBucket  { std::vector<std::size_t> rows; };
 
+// NEW: 汇聚线程错误，记录第一条异常消息
+class ErrorSink {
+public:
+    void record(const std::exception& e) {
+        bool expected = false;
+        if (has_error_.compare_exchange_strong(expected, true)) {
+            std::lock_guard<std::mutex> lk(mu_);
+            msg_ = e.what();
+        }
+    }
+    void recordUnknown() {
+        bool expected = false;
+        if (has_error_.compare_exchange_strong(expected, true)) {
+            std::lock_guard<std::mutex> lk(mu_);
+            msg_ = "unknown error";
+        }
+    }
+    bool error() const noexcept { return has_error_.load(); }
+    std::string message() const {
+        std::lock_guard<std::mutex> lk(mu_);
+        return msg_;
+    }
+private:
+    std::atomic<bool> has_error_{false};
+    mutable std::mutex mu_;
+    std::string msg_;
+};
+
 class CommandTaskWorker : public ddb::Runnable {
 public:
     using Group = std::pair<std::string, std::vector<CommandTask>>;
 
     CommandTaskWorker(ConnFacade& conn,
-    std::vector<Group> items)
-    : conn_(conn), items_(std::move(items)) {}
+        std::vector<Group> items,
+        ErrorSink& sink)
+    : conn_(conn), items_(std::move(items)), sink_(&sink) {}
+
     void run() override {
-        auto& rcx = conn_.rc();
-        const auto& pol = conn_.policy();
-        for (auto& kv : items_) {
-            auto& routeKey = kv.first;
-            auto& list = kv.second;
-            if (list.size() < pol.min_pipeline) {
-                for (auto& t : list) t.execDirect(rcx);
-                continue;
+        try {
+            auto& rcx = conn_.rc();
+            const auto& pol = conn_.policy();
+            for (auto& kv : items_) {
+                if (sink_ && sink_->error()) return; // 其他线程已出错则提前退出
+                auto& routeKey = kv.first;
+                auto& list = kv.second;
+                if (list.size() < pol.min_pipeline) {
+                    for (auto& t : list) {
+                        if (sink_ && sink_->error()) return;
+                        t.execDirect(rcx);
+                    }
+                    continue;
+                }
+                size_t p = 0, n = list.size();
+                while (p < n) {
+                    if (sink_ && sink_->error()) return;
+                    size_t upto = std::min(n, p + pol.batch_window);
+                    auto pipe = rcx.pipeline(routeKey, /*new_connection=*/pol.new_connection);
+                    for (; p < upto; ++p) list[p].execPiped(pipe);
+                    pipe.exec();
+                }
             }
-            size_t p = 0, n = list.size();
-            while (p < n) {
-                size_t upto = std::min(n, p + pol.batch_window);
-                auto pipe = rcx.pipeline(routeKey, /*new_connection=*/true);
-                for (; p < upto; ++p) list[p].execPiped(pipe);
-                pipe.exec();
-            }
+        } catch (const std::exception& e) {
+            if (sink_) sink_->record(e);
+        } catch (...) {
+            if (sink_) sink_->recordUnknown();
         }
     }
 private:
     ConnFacade& conn_;
     std::vector<Group> items_;
+    ErrorSink* sink_;
 };
 
 void dispatchCommandTasks(ConnFacade& conn,
@@ -87,9 +129,11 @@ void dispatchCommandTasks(ConnFacade& conn,
         return;
     }
 
+    // 多线程路径：加入错误汇聚和统一抛错
     // Multithreaded path with a hard cap.
     const int threadsCap = std::min(numThreads, hardwareCap());
     std::vector<ddb::ThreadSP> ths;
+    ErrorSink err;
 
     if (groups.size() == 1) {
         // All commands hit the same routeKey (same hash-tag/slot).
@@ -121,12 +165,14 @@ void dispatchCommandTasks(ConnFacade& conn,
 
         ths.reserve(static_cast<std::size_t>(shardCount));
         for (int s = 0; s < shardCount; ++s) {
-            auto* w = new CommandTaskWorker(conn, std::move(shards[static_cast<std::size_t>(s)]));
+            auto* w = new CommandTaskWorker(conn, std::move(shards[static_cast<std::size_t>(s)]), err);
             ddb::ThreadSP thr = new ddb::Thread(w);
             thr->start();
             ths.emplace_back(std::move(thr));
         }
         for (auto& th : ths) th->join();
+        if (err.error())
+            throw ddb::RuntimeException(std::string("[Plugin::RedisCluster] worker failed: ") + err.message());
         return;
     }
 
@@ -144,11 +190,13 @@ void dispatchCommandTasks(ConnFacade& conn,
 
     ths.reserve(static_cast<std::size_t>(shardCount));
     for (int s = 0; s < shardCount; ++s) {
-        auto* w = new CommandTaskWorker(conn, std::move(shards[static_cast<std::size_t>(s)]));
+        auto* w = new CommandTaskWorker(conn, std::move(shards[static_cast<std::size_t>(s)]), err);
         ddb::ThreadSP thr = new ddb::Thread(w);
         thr->start();
         ths.emplace_back(std::move(thr));
     }
     for (auto& th : ths) th->join();
+    if (err.error())
+        throw ddb::RuntimeException(std::string("[Plugin::RedisCluster] worker failed: ") + err.message());
     }
 } // namespace rc

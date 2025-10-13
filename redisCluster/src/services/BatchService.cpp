@@ -171,7 +171,7 @@ void BatchService::batchHSet(const std::vector<std::string>& keys,
     dispatchCommandTasks(conn_, std::move(cmdTasks), numThreads);
 }
 
-void BatchService::deleteKeys(const std::vector<std::string>& keys,
+void BatchService::batchDel(const std::vector<std::string>& keys,
                                  bool useUnlink,
                                  int numThreads) const
 {

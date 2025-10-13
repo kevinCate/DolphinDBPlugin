@@ -12,7 +12,7 @@ using ddb::VectorSP;
 
 ddb::ConstantSP ddb_rc_get(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     if (args.size()<2 || !args[1]->isScalar() || args[1]->getType()!=ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: get(handle, key:string)");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: get(handle, key:string)");
 
     auto conn = rc::getConn(args[0]);
     rc::ConnFacade cf(*conn);
@@ -29,7 +29,10 @@ ddb::ConstantSP ddb_rc_set(ddb::Heap*, const std::vector<ddb::ConstantSP>& args)
     if (args.size()<3
         || !args[1]->isScalar() || args[1]->getType()!=ddb::DT_STRING
         || !args[2]->isScalar() || args[2]->getType()!=ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: set(handle, key, val, [ttl:int])");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: set(handle, key:string, val:string, [ttl:int])");
+
+    if (args.size()>=4 && (!args[3]->isScalar() || args[3]->getType()!=ddb::DT_INT))
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: ttl must be INT");
 
     auto conn = rc::getConn(args[0]);
     rc::ConnFacade cf(*conn);

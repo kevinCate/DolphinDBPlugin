@@ -34,7 +34,7 @@ ConstantSP ddb_rc_batchGet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args)
         || args[1]->getType() != ddb::DT_STRING)
     {
         throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Usage: mget(handle, keys:STRING VECTOR)");
+            "[Plugin::RedisCluster] Usage: batchGet(handle, keys:STRING VECTOR)");
     }
 
     auto conn = rc::getConn(args[0]);
@@ -64,7 +64,7 @@ ConstantSP ddb_rc_batchGet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args)
 
 ConstantSP ddb_rc_batchSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     if (args.size()<3)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Usage: batchSet(handle, keys, values, [batchWin:int=2048], [numThreads:int=3])");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: batchSet(handle, keys, values, [batchWin:int=2048], [numThreads:int=3])");
 
     auto conn = rc::getConn(args[0]);
     rc::ConnFacade cf(*conn);
@@ -84,29 +84,29 @@ ConstantSP ddb_rc_batchSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& args)
 
     // vector-vector path
     if (args[1]->getForm()!=ddb::DF_VECTOR || args[1]->getType()!=ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument keys must be a STRING VECTOR when not scalar-scalar.");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Argument keys must be a STRING VECTOR when not scalar-scalar.");
     if (args[2]->getForm()!=ddb::DF_VECTOR || args[2]->getType()!=ddb::DT_STRING)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "Argument values must be a STRING VECTOR when not scalar-scalar.");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Argument values must be a STRING VECTOR when not scalar-scalar.");
 
     ddb::VectorSP vkeys = args[1];
     ddb::VectorSP vvals = args[2];
     if (vkeys->size()!=vvals->size())
-        throw ddb::IllegalArgumentException(__FUNCTION__, "keys and values must have the same size.");
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] keys and values must have the same size.");
 
     // optional tuning
     std::size_t batchWin = cf.policy().batch_window;
-    int numThreads = 3;
+    int numThreads = 1;
     if (args.size()>=4){
         auto &bw=args[3];
         if (!bw->isScalar() || bw->getType()!=ddb::DT_INT)
-            throw ddb::IllegalArgumentException(__FUNCTION__, "batchWin must be INT SCALAR if provided.");
+            throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] batchWin must be INT SCALAR if provided.");
         batchWin = static_cast<std::size_t>(bw->getInt());
         if (batchWin==0) throw ddb::IllegalArgumentException(__FUNCTION__, "batchWin must be > 0.");
     }
     if (args.size()>=5){
         auto &nt=args[4];
         if (!nt->isScalar() || nt->getType()!=ddb::DT_INT)
-            throw ddb::IllegalArgumentException(__FUNCTION__, "numThreads must be INT SCALAR if provided.");
+            throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] numThreads must be INT SCALAR if provided.");
         numThreads = nt->getInt();
         if (numThreads<1) numThreads=1;
     }
@@ -134,19 +134,40 @@ ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& a
 
     if (args.size() < 3)
         throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE, batchWin:INT SCALAR=default, numThreads:INT=1)");
+            "[Plugin::RedisCluster] Usage: batchHashSet(conn, ids:STRING VECTOR, fieldData:STRING TABLE, batchWin:INT SCALAR=default, numThreads:INT=1)");
 
-    auto conn = rc::getConn(args[0]);
     if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING) {
         throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Argument ids must be STRING VECTOR.");
-    }
-    TableSP tb = TableSP(args[2]);
-    if (!tb || tb->getTableType() != ddb::BASICTBL) {
-        throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Argument fieldData must be a BASIC TABLE.");
+            "[Plugin::RedisCluster] Argument ids must be STRING VECTOR.");
     }
 
+    // STRICT: validate table form BEFORE any cast to TableSP to avoid crash
+    if (args[2]->getForm() != ddb::DF_TABLE) {
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Argument fieldData must be a TABLE.");
+    }
+
+    TableSP tb = args[2];
+    if (!tb) {
+        throw ddb::RuntimeException("[Plugin::RedisCluster] fieldData is null.");
+    }
+    if (tb->getTableType() != ddb::BASICTBL) {
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Argument fieldData must be a BASIC TABLE.");
+    }
+
+    // validate columns are STRING
+    for (int c = 0; c < tb->columns(); ++c) {
+        if (tb->getColumn(c)->getType() != ddb::DT_STRING) {
+            throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] fieldData columns must be STRING.");
+        }
+    }
+
+    // materialize ids and validate row count
+    const auto ids = toStdStringVec(args[1]);
+    if (static_cast<std::size_t>(tb->size()) != ids.size()) {
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] ids and fieldData must have the same number of rows.");
+    }
+
+    auto conn = rc::getConn(args[0]);
     rc::ConnFacade cf(*conn);
 
     // batch window default from policy
@@ -157,35 +178,22 @@ ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& a
         auto &bw = args[3];
         if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument batchWin must be INT SCALAR if provided.");
+                "[Plugin::RedisCluster] Argument batchWin must be INT SCALAR if provided.");
         }
         batchWin = static_cast<std::size_t>(bw->getInt());
         if (batchWin == 0)
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument batchWin must be > 0.");
+                "[Plugin::RedisCluster] Argument batchWin must be > 0.");
     }
 
     if (args.size() >= 5) {
         auto &nt = args[4];
         if (!nt->isScalar() || nt->getType() != ddb::DT_INT) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument numThreads must be INT SCALAR if provided.");
+                "[Plugin::RedisCluster] Argument numThreads must be INT SCALAR if provided.");
         }
         numThreads = nt->getInt();
         if (numThreads < 1) numThreads = 1;  // fallback
-    }
-
-    const auto ids = toStdStringVec(args[1]);
-    if (static_cast<std::size_t>(tb->size()) != ids.size()) {
-        throw ddb::IllegalArgumentException(__FUNCTION__,
-            "ids and fieldData must have the same number of rows.");
-    }
-
-    // Check all columns are string
-    for (int c = 0; c < tb->columns(); ++c) {
-        if (tb->getColumn(c)->getType() != ddb::DT_STRING) {
-            throw ddb::RuntimeException("[Plugin::RedisCluster] fieldData columns must be STRING.");
-        }
     }
 
     // Set policy
@@ -199,16 +207,16 @@ ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>& a
     return new ddb::String("batchHashSet finish.");
 }
 
-ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>& args) {
+ddb::ConstantSP ddb_rc_batchDel(ddb::Heap*, const std::vector<ddb::ConstantSP>& args) {
     if (args.size() < 2) {
         throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Usage: deleteKeys(conn, ids:STRING VECTOR, batchWin:INT=default, useUnlink:BOOL=true, numThreads:INT=1)");
+            "[Plugin::RedisCluster] Usage: batchDel(conn, ids:STRING VECTOR, batchWin:INT=default, useUnlink:BOOL=true, numThreads:INT=1)");
     }
 
     auto conn = rc::getConn(args[0]);
     if (args[1]->getForm() != ddb::DF_VECTOR || args[1]->getType() != ddb::DT_STRING) {
         throw ddb::IllegalArgumentException(__FUNCTION__,
-            "Argument ids must be STRING VECTOR.");
+            "[Plugin::RedisCluster] Argument ids must be STRING VECTOR.");
     }
 
     rc::ConnFacade cf(*conn);
@@ -222,18 +230,18 @@ ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>
         auto &bw = args[2];
         if (!bw->isScalar() || bw->getType() != ddb::DT_INT) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument batchWin must be INT SCALAR if provided.");
+                "[Plugin::RedisCluster] Argument batchWin must be INT SCALAR if provided.");
         }
         batchWin = static_cast<std::size_t>(bw->getInt());
         if (batchWin == 0)
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument batchWin must be > 0.");
+                "[Plugin::RedisCluster] Argument batchWin must be > 0.");
     }
     if (args.size() >= 4) {
         auto &nt = args[3];
         if (!nt->isScalar() || nt->getType() != ddb::DT_INT) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument numThreads must be INT SCALAR if provided.");
+                "[Plugin::RedisCluster] Argument numThreads must be INT SCALAR if provided.");
         }
         numThreads = nt->getInt();
         if (numThreads < 1) numThreads = 1;
@@ -242,7 +250,7 @@ ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>
         auto &ul = args[4];
         if (!ul->isScalar() || (ul->getType() != ddb::DT_BOOL && ul->getType() != ddb::DT_INT)) {
             throw ddb::IllegalArgumentException(__FUNCTION__,
-                "Argument useUnlink must be BOOL or INT.");
+                "[Plugin::RedisCluster] Argument useUnlink must be BOOL or INT.");
         }
         useUnlink = ul->getBool();
     }
@@ -252,7 +260,7 @@ ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>
     cf.setBatchWindow(batchWin);
 
     const BatchService svc(cf);
-    svc.deleteKeys(ids, useUnlink, numThreads);
+    svc.batchDel(ids, useUnlink, numThreads);
 
-    return new ddb::String("deleteKeys finish.");
+    return new ddb::String("batchDel finish.");
 }

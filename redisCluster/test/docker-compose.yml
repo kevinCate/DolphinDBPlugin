@@ -1,0 +1,179 @@
+services:
+
+  ddb:
+    image: dolphindb/dolphindb-jit:v3.00.4
+    container_name: plugin-ddb
+    ports:
+      - "127.0.0.1:6848:8848"
+    ulimits:
+      nofile:
+        soft: 1000000
+        hard: 1000000
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        cd /data/ddb/server
+        echo "[entry] launching DolphinDB..."
+        ./dolphindb \
+          -console 0 \
+          -stdoutLog true \
+          -home data \
+          -script dolphindb.dos \
+        > single.nohup 2>&1 &
+        echo "[entry] DolphinDB PID: $!"
+        exec tail -n +1 -F single.nohup
+    # optional: tiny init cleans up zombies (good hygiene)
+    init: true
+    # optional: give DolphinDB time to shut down when you 'down' the stack
+    stop_grace_period: 30s
+    networks:
+      - plugin-redis-cluster-net
+
+  redis1:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis1
+    command: >
+      redis-stack-server
+        --cluster-enabled yes 
+        --cluster-config-file nodes.conf 
+        --cluster-node-timeout 5000 
+        --appendonly yes 
+        --maxmemory 512mb 
+        --maxmemory-policy volatile-lru 
+        --cluster-announce-hostname redis1
+        --cluster-announce-port 6379
+        --cluster-announce-bus-port 16379
+        --cluster-preferred-endpoint-type hostname
+    networks:
+      - plugin-redis-cluster-net
+
+  redis2:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis2
+    command: >
+      redis-stack-server
+        --cluster-enabled yes 
+        --cluster-config-file nodes.conf 
+        --cluster-node-timeout 5000 
+        --appendonly yes 
+        --maxmemory 512mb 
+        --maxmemory-policy volatile-lru 
+        --cluster-announce-hostname redis2
+        --cluster-announce-port 6379
+        --cluster-announce-bus-port 16379
+        --cluster-preferred-endpoint-type hostname
+    networks:
+      - plugin-redis-cluster-net
+
+  redis3:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis3
+    command: >
+      redis-stack-server
+        --cluster-enabled yes 
+        --cluster-config-file nodes.conf 
+        --cluster-node-timeout 5000 
+        --appendonly yes 
+        --maxmemory 512mb 
+        --maxmemory-policy volatile-lru 
+        --cluster-announce-hostname redis3
+        --cluster-announce-port 6379
+        --cluster-announce-bus-port 16379
+        --cluster-preferred-endpoint-type hostname
+    networks:
+      - plugin-redis-cluster-net
+
+  redis4:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis4
+    command: >
+      redis-stack-server
+        --cluster-enabled yes 
+        --cluster-config-file nodes.conf 
+        --cluster-node-timeout 5000 
+        --appendonly yes 
+        --maxmemory 512mb 
+        --maxmemory-policy volatile-lru 
+        --cluster-announce-hostname redis4
+        --cluster-announce-port 6379
+        --cluster-announce-bus-port 16379
+        --cluster-preferred-endpoint-type hostname
+    networks:
+      - plugin-redis-cluster-net
+
+  redis5:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis5
+    command: >
+      redis-stack-server
+        --cluster-enabled yes 
+        --cluster-config-file nodes.conf 
+        --cluster-node-timeout 5000 
+        --appendonly yes 
+        --maxmemory 512mb 
+        --maxmemory-policy volatile-lru 
+        --cluster-announce-hostname redis5
+        --cluster-announce-port 6379
+        --cluster-announce-bus-port 16379
+        --cluster-preferred-endpoint-type hostname
+    networks:
+      - plugin-redis-cluster-net
+
+  redis6:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis6
+    command: >
+       redis-stack-server
+        --cluster-enabled yes 
+        --cluster-config-file nodes.conf 
+        --cluster-node-timeout 5000 
+        --appendonly yes 
+        --maxmemory 512mb 
+        --maxmemory-policy volatile-lru 
+        --cluster-announce-hostname redis6
+        --cluster-announce-port 6379
+        --cluster-announce-bus-port 16379
+        --cluster-preferred-endpoint-type hostname
+    networks:
+      - plugin-redis-cluster-net
+
+  redis-cluster-init:
+    image: redis/redis-stack-server:7.4.0-v6
+    container_name: plugin-redis-cluster-init
+    depends_on:
+      - redis1
+      - redis2
+      - redis3
+      - redis4
+      - redis5
+      - redis6
+    entrypoint: >
+      bash -c "
+        echo 'Waiting for Redis nodes to be ready...' &&
+        until redis-cli -h redis1 ping; do echo 'Waiting for redis1...'; sleep 2; done &&
+        until redis-cli -h redis2 ping; do echo 'Waiting for redis2...'; sleep 2; done &&
+        until redis-cli -h redis3 ping; do echo 'Waiting for redis3...'; sleep 2; done &&
+        until redis-cli -h redis4 ping; do echo 'Waiting for redis4...'; sleep 2; done &&
+        until redis-cli -h redis5 ping; do echo 'Waiting for redis5...'; sleep 2; done &&
+        until redis-cli -h redis6 ping; do echo 'Waiting for redis6...'; sleep 2; done &&
+        sleep 2 &&
+        echo 'Creating Redis Cluster...' &&
+        redis-cli --cluster create redis1:6379 redis2:6379 redis3:6379 redis4:6379 redis5:6379 redis6:6379 --cluster-replicas 1 --cluster-yes &&
+        echo 'Redis Cluster created!'
+      "
+    networks:
+      - plugin-redis-cluster-net
+  
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: plugin-redisinsight
+    ports:
+      - "127.0.0.1:4540:5540"
+    networks:
+      - plugin-redis-cluster-net
+
+networks:
+  plugin-redis-cluster-net:
+    driver: bridge

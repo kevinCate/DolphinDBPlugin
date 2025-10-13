@@ -5,6 +5,7 @@
 #include "commands/batch.h"
 #include "commands/run.h"
 #include "commands/list.h"
+#include <exception>
 
 // onClose：当 DolphinDB 回收资源时调用
 static void onClose(ddb::Heap*, std::vector<ddb::ConstantSP>&){ /* no-op */ }
@@ -13,7 +14,7 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
     if (args.size() < 2
         || !args[0]->isScalar() || args[0]->getType()!=ddb::DT_STRING
         || !args[1]->isScalar() || args[1]->getType()!=ddb::DT_INT) {
-        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: redisClusterConnect(host:string, port:int, [password:string], [poolSize:int], [readReplica:bool])"); // NOLINT(cert-err60-cpp)
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: redisCluster::connect(host:string, port:int, [password:string], [poolSize:int], [waiTimeoutMs:int])"); // NOLINT(cert-err60-cpp)
     }
 
     sw::redis::ConnectionOptions conn_opt;
@@ -24,20 +25,35 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
 
     sw::redis::ConnectionPoolOptions pool_opt;
     pool_opt.wait_timeout = std::chrono::milliseconds(100);
-    if (args.size() >= 4 && args[3]->isScalar()) pool_opt.size = std::max(1, args[3]->getInt());
+    pool_opt.size = 3;
 
-    // 可选：读副本
+    if (args.size() >= 4) {
+        if (!args[3]->isScalar() || args[3]->getType()!=ddb::DT_INT) {
+            throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] 'poolSize' must be an INT scalar");
+        }
+        int ps = args[3]->getInt();
+        if (ps <= 0) {
+            throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] 'poolSize' must be > 0");
+        }
+        pool_opt.size = ps;
+    }
     auto role = sw::redis::Role::MASTER;
-    if (args.size() >= 5 && args[4]->isScalar() && args[4]->getBool()) {
-        role = sw::redis::Role::SLAVE;  // 只允许只读命令
+
+    if (args.size() >= 5) {
+        if (args[4]->isScalar() && args[4]->getType() == ddb::DT_INT) {
+            int wt = args[4]->getInt();
+            if (wt < 0) wt = 0;
+            pool_opt.wait_timeout = std::chrono::milliseconds(wt);
+        } else {
+            // 新增这一块：如果提供了第 4 个参数但不是合法的 INT 标量，就报错
+            throw ddb::IllegalArgumentException(__FUNCTION__,
+                "[Plugin::RedisCluster] 'waitTimeoutMs' must be an INT scalar if provided");
+        }
     }
 
     try {
         std::unique_ptr<sw::redis::RedisCluster> cluster;
-        if (pool_opt.size > 1 || role==sw::redis::Role::SLAVE)
-            cluster = std::make_unique<sw::redis::RedisCluster>(conn_opt, pool_opt, role);
-        else
-            cluster = std::make_unique<sw::redis::RedisCluster>(conn_opt);
+        cluster = std::make_unique<sw::redis::RedisCluster>(conn_opt, pool_opt, role);
 
         const std::string address = conn_opt.host + ":" + std::to_string(conn_opt.port);
         ddb::SmartPointer<rc::RedisClusterConn> conn = new rc::RedisClusterConn(std::move(cluster), address);
@@ -58,7 +74,7 @@ ddb::ConstantSP redisClusterConnect(ddb::Heap* heap, const std::vector<ddb::Cons
 
 ddb::ConstantSP redisClusterRelease(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     if (args.empty() || args[0]->getType()!=ddb::DT_RESOURCE || args[0]->getString()!=rc::RC_HANDLE_NAME)
-        throw ddb::IllegalArgumentException(__FUNCTION__, "First argument must be a redis cluster handle."); // NOLINT(cert-err60-cpp)
+        throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] First argument must be a redis cluster handle."); // NOLINT(cert-err60-cpp)
     // compute token before removing
     auto sp = rc::getConn(args[0]);
     const std::string token = std::to_string(reinterpret_cast<long long>(sp.get()));
@@ -67,14 +83,18 @@ ddb::ConstantSP redisClusterRelease(ddb::Heap*, const std::vector<ddb::ConstantS
         rc::g_token2handle.erase(token);
     }
     rc::g_rc_map.safeRemove(args[0]);
-    return new ddb::String("ok");
+    return new ddb::String("OK");
 }
 
 ddb::ConstantSP redisClusterReleaseAll(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
     if (!args.empty())
         throw ddb::IllegalArgumentException(__FUNCTION__, "[Plugin::RedisCluster] Usage: releaseAll()");
     rc::g_rc_map.clear();
-    return new ddb::String("ok");
+    {
+        std::lock_guard lk(rc::g_token_mu);
+        rc::g_token2handle.clear();   // 同步清空，避免陈旧 token 残留
+    }
+    return new ddb::String("OK");
 }
 
 ddb::ConstantSP redisClusterGetHandle(ddb::Heap*, const std::vector<ddb::ConstantSP>& args){
@@ -113,11 +133,19 @@ ddb::ConstantSP redisClusterGetHandleStatus(ddb::Heap*, const std::vector<ddb::C
         for (auto it = rc::g_token2handle.begin(); it != rc::g_token2handle.end(); ) {
             const std::string& token = it->first;
             const ddb::ConstantSP& h = it->second;
-            auto sp = rc::g_rc_map.safeGet(h);
-            if (sp.isNull()) {
-                it = rc::g_token2handle.erase(it); // clean stale
+
+            ddb::SmartPointer<rc::RedisClusterConn> sp;
+            try {
+                sp = rc::g_rc_map.safeGet(h);   // 可能抛出“Handle is unregistered.”
+            } catch (const std::exception&) {
+                it = rc::g_token2handle.erase(it); // 碰到陈旧句柄就清掉并继续
                 continue;
             }
+            if (sp.isNull()) {                    // 兜底：按旧接口语义再判空
+                it = rc::g_token2handle.erase(it);
+                continue;
+            }
+
             tokens.push_back(token);
             addrs.push_back(sp->getAddress());
             times.push_back(sp->getCreatedTime());
@@ -156,10 +184,59 @@ ddb::ConstantSP redisClusterBatchGet(ddb::Heap* h, const std::vector<ddb::Consta
 
 ddb::ConstantSP redisClusterBatchHashSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchHashSet(h, args); }
 
-ddb::ConstantSP redisClusterBatchDel(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_deleteKeys(h, args); }
+ddb::ConstantSP redisClusterBatchDel(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchDel(h, args); }
 
 ddb::ConstantSP redisClusterRun(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_run(h, args); }
 
 ddb::ConstantSP redisClusterBatchSet(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchSet(h, args); }
 
 ddb::ConstantSP redisClusterBatchPush(ddb::Heap* h, const std::vector<ddb::ConstantSP>& args){ return ddb_rc_batchPush(h, args); }
+
+ddb::ConstantSP pluginInfo(ddb::Heap*, std::vector<ddb::ConstantSP>& args){
+    (void)args;
+
+#ifndef PLUGIN_RC_NAME
+#  define PLUGIN_RC_NAME "redisCluster"
+#endif
+#ifndef PLUGIN_RC_VERSION
+#  define PLUGIN_RC_VERSION "3.00.4.0"
+#endif
+#ifndef PLUGIN_RC_SERVER_VERSION
+#  define PLUGIN_RC_SERVER_VERSION "3.00.4"
+#endif
+#ifndef PLUGIN_RC_OPEN_SOURCE
+#  define PLUGIN_RC_OPEN_SOURCE 0
+#endif
+#ifndef PLUGIN_RC_REPO_URL
+#  define PLUGIN_RC_REPO_URL "https://dolphindb.com/redisCluster"
+#endif
+#ifndef PLUGIN_RC_IS_FREE
+#  define PLUGIN_RC_IS_FREE 1
+#endif
+#ifndef PLUGIN_RC_IS_FREE_COMMERCIAL
+#  define PLUGIN_RC_IS_FREE_COMMERCIAL 1
+#endif
+#ifndef PLUGIN_RC_FEATURE
+#  define PLUGIN_RC_FEATURE "AutomaticRouting,Pipeline,Multithreading"
+#endif
+
+    ddb::DictionarySP dict = ddb::Util::createDictionary(ddb::DT_STRING, nullptr, ddb::DT_ANY, nullptr);
+    auto put = [&](const char* k, const ddb::ConstantSP& v){ dict->set(new ddb::String(k), v); };
+
+    put("pluginName", new ddb::String(PLUGIN_RC_NAME));
+    put("openSource", new ddb::Bool(static_cast<char>(PLUGIN_RC_OPEN_SOURCE ? 1 : 0)));
+    put("repositoryUrl", new ddb::String(PLUGIN_RC_REPO_URL));
+    put("isFree", new ddb::Bool(static_cast<char>(PLUGIN_RC_IS_FREE ? 1 : 0)));
+    put("isFreeForCommercial", new ddb::Bool(static_cast<char>(PLUGIN_RC_IS_FREE_COMMERCIAL ? 1 : 0)));
+    put("pluginVersion", new ddb::String(PLUGIN_RC_VERSION));
+    put("serverVersion", new ddb::String(PLUGIN_RC_SERVER_VERSION));
+
+    const char* arch = "x86_64";
+    put("architecture", new ddb::String(arch));
+
+    const char* platform = "Linux";
+    put("platform", new ddb::String(platform));
+
+    put("feature", new ddb::String(PLUGIN_RC_FEATURE));
+    return ddb::ConstantSP(dict);
+}

@@ -13,6 +13,8 @@ using ddb::VectorSP;
 
 namespace {
 
+constexpr int kMaxCmdTokens = 4096;
+
 bool starts_with(const std::string& s, const char* pfx) {
     return s.rfind(pfx, 0) == 0;
 }
@@ -34,6 +36,10 @@ void parse_route_and_command(const ConstantSP& routeArg,
     if (n <= 0)
         throw IllegalArgumentException(
             __FUNCTION__, "[Plugin::RedisCluster] command vector must not be empty.");
+    if (n > kMaxCmdTokens) {
+        throw IllegalArgumentException(
+            __FUNCTION__, "[Plugin::RedisCluster] command vector length must not exceed 4096.");
+    }
 
     // pull routeKey text
     std::string head = routeArg->getString();

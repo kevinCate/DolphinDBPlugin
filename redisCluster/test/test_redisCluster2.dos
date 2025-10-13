@@ -1,0 +1,252 @@
+/* test_redisCluster_param.dos������У��ع飬������ Redis ������*/
+
+login("admin","123456")
+/* ���԰����ƻ�·�����ز�� */
+try{ loadPlugin("redisCluster") } catch(ex){ print(ex) }
+try{ loadPlugin("plugins/redisCluster/PluginRedisCluster.txt") } catch(ex){ print(ex) }
+
+
+��������������������������������������������������������������������
+test_redisCluster_env.dos������/����/��Դ�ȣ����� Redis Cluster��
+
+/* �������ã��밴�����޸ģ�password Ϊ���������ַ��� */
+RC_HOST = "127.0.0.1"
+RC_PORT = 6379
+RC_PASS = ""
+RC_TAG  = "{rc:ut}"    // ͳһ�Ĺ�ϣ��ǩ������·�ɾۺ�
+
+login("admin","123456")
+try{ loadPlugin("redisCluster") } catch(ex){ print(ex) }
+try{ loadPlugin("plugins/redisCluster/PluginRedisCluster.txt") } catch(ex){ print(ex) }
+
+
+/* ������batchSet ���߳� submitJob */
+@testing:case="rc_concurrent_batchSet_submitJob"
+def bsJob(conn, base){
+    ks = base + string(1..100)
+    vs = "p" + string(1..100)
+    redisCluster::batchSet(conn, ks, vs, 256, 3)
+}
+jobIds = []
+for(i in 1..20){
+    jobIds.append!(submitJob("bsJob"+string(i), "", bsJob, conn, RC_TAG + ":pj:"+string(i)+":"))
+}
+for(j in jobIds){ getJobReturn(j, true) }
+re = exec errorMsg from getRecentJobs() where jobId like "bsJob%"
+assert 1, isNull(re)
+
+
+login("admin","123456")
+/* 按名称或路径加载插件，二选一，失败不影响后续 */
+try{ loadPlugin("redisCluster") }catch(ex){ print(ex) }
+try{ loadPlugin("plugins/redisCluster/PluginRedisCluster.txt") }catch(ex){ print(ex) }
+
+/* 基本环境：请按需修改 */
+RC_HOST = "127.0.0.1"
+RC_PORT = 6379
+RC_PASS = ""               // 无密码留空
+RC_TAG  = "{rc:ut}"        // 固定哈希标签，集中到同一slot，最大化单节点压力
+
+/* 并发 INCRBY 同一计数键（同一 slot）*/
+@testing:case="test_rc_concurrent_run_incrby"
+rk = "{rc:mt:ctr}"
+ctrKey = "rc:test:"+rk+":mtctr"
+redisCluster::run(conn, rk, ["DEL", ctrKey])
+
+def incrJob(conn, rk, key, cnt){
+  for(i in 1..cnt){ redisCluster::run(conn, rk, ["INCRBY", key, "1"]) }
+}
+T = 8          // 线程数
+CNT = 1000     // 每线程次数
+jobIds = []
+for(i in 1..T){
+  jobIds.append!(submitJob("rc_incr_"+string(i), "", incrJob, conn, rk, ctrKey, CNT))
+}
+for(id in jobIds){ getJobReturn(id, true) }
+finalVal = redisCluster::run(conn, rk, ["GET", ctrKey])
+assert 1, eq(finalVal, string(T*CNT))
+
+/* batchSet（跨 slot，多线程）*/
+@testing:case="test_rc_concurrent_batchSet"
+def bsJob(conn, prefix, from, to){
+  n = to - from + 1
+  keys = take(prefix, n) + string(from..to)
+  vals = take("v", n) + string(from..to)
+  // 给多线程路径一些压力
+  redisCluster::batchSet(conn, keys, vals, 4096, 4)
+}
+prefix = "rc:test:mt:slot:k"    // 无 tag，跨 slot
+T = 6
+N = 60000
+step = N \ T
+jobIds = []
+for(i in 0..(T-1)){
+  l = int(i*step + 1)
+  r = int((i==(T-1)) ? N : (i+1)*step)
+  jobIds.append!(submitJob("rc_bs_"+string(i+1), "", bsJob, conn, prefix, l, r))
+}
+for(id in jobIds){ getJobReturn(id, true) }
+// 采样校验
+idx = 1..SAMPLE_K
+skeys = take(prefix, SAMPLE_K) + string(idx*int(N/SAMPLE_K))
+svals = take("v", SAMPLE_K) + string(idx*int(N/SAMPLE_K))
+re = redisCluster::batchGet(conn, skeys)
+assert 1, eqObj(svals, re)
+
+/* batchSet（跨 slot，单线程）*/
+conn = redisCluster::connect(ip, port, password)
+@testing:case="test_rc_concurrent_batchSet"
+def bsJob(conn, prefix, from, to){
+  n = to - from + 1
+  keys = take(prefix, n) + string(from..to)
+  vals = take("v", n) + string(from..to)
+  // 给多线程路径一些压力
+  redisCluster::batchSet(conn, keys, vals, 4096, 1)
+}
+prefix = "rc:test:mt:slot:k"    // 无 tag，跨 slot
+T = 6
+N = 60000
+step = N \ T
+jobIds = []
+redisCluster::batchDel(conn, take(prefix, N) + string(1..N))
+for(i in 0..(T-1)){
+  l = int(i*step + 1)
+  r = int((i==(T-1)) ? N : (i+1)*step)
+  jobIds.append!(submitJob("rc_bs_"+string(i+1), "", bsJob, conn, prefix, l, r))
+}
+for(id in jobIds){ getJobReturn(id, true) }
+// 采样校验
+idx = 1..SAMPLE_K
+skeys = take(prefix, SAMPLE_K) + string(idx*int(N/SAMPLE_K))
+svals = take("v", SAMPLE_K) + string(idx*int(N/SAMPLE_K))
+re = redisCluster::batchGet(conn, skeys)
+assert 1, eqObj(svals, re)
+
+/*****************************************
+2) 多线程并发：池足 vs 池不足（单作业）
+*****************************************/
+
+
+/*********************
+1) 多次调用同一个接口（结果一致性）
+*********************/
+@testing:case="rc_bs_repeat_ok"
+conn_ok = redisCluster::connect(RC_HOST, RC_PORT, RC_PASS, 6, 100)  // poolSize=6, wait_timeout=100ms
+ks = RC_TAG + ":rpt:" + string(1..100)
+v1 = "vA" + string(1..100)
+ret1 = redisCluster::batchSet(conn_ok, ks, v1, 512, 2)
+assert 1, eqObj("batchSet finish.", ret1)
+/* 第二次覆盖写入 */
+v2 = "vB" + string(1..100)
+ret2 = redisCluster::batchSet(conn_ok, ks, v2, 512, 2)
+assert 2, eqObj("batchSet finish.", ret2)
+/* 抽样校验（用 run 做 MGET，避免额外接口依赖；仍基于插件） */
+pick = [ks[0], ks[49], ks[99]]
+mg = redisCluster::run(conn_ok, RC_TAG, concat!(["MGET"], pick))
+assert 3, eqObj([v2[0], v2[49], v2[99]], mg)
+
+/*****************************************
+2) 多线程并发：池足 vs 池不足（单作业）
+*****************************************/
+/* 池不足（单作业内 numThreads > poolSize）应失败 */
+@testing:case="rc_bs_single_job_pool_insufficient", exception=1
+conn_small_1 = redisCluster::connect(RC_HOST, RC_PORT, RC_PASS, 2, 0) // poolSize=2, wait_timeout=0ms
+ks_s = RC_TAG + ":sj:" + string(1..200)
+vs_s = "s" + string(1..200)
+/* numThreads=4 > poolSize=2，触发连接池获取超时 */
+redisCluster::batchSet(conn_small_1, ks_s, vs_s, 256, 4)
+
+/*****************************************
+3) 多线程并发：跨作业 submitJob
+   - 情况A：池足（满足公式）全部成功
+   - 情况B：池不足触发失败
+   仅定义一个极简作业函数
+*****************************************/
+def bsJob(conn, base, n, nt){
+    ks = base + string(1..n)
+    vs = "p" + string(1..n)
+    /* 仅 batchSet，batchWin 适中，强调并发线程 nt */
+    redisCluster::batchSet(conn, ks, vs, 512, nt)
+}
+
+/* 情况A：池足，满足 poolSize ≥ (跨作业并发数 × 单作业 numThreads + 2) */
+@testing:case="rc_bs_multi_job_pool_enough"
+CROSS   = 3   // 跨作业并发数
+NT      = 2   // 单作业 numThreads
+NEEDED  = CROSS * NT + 2
+POOL_OK = NEEDED
+conn_ok2 = redisCluster::connect(RC_HOST, RC_PORT, RC_PASS, POOL_OK, 50)  // 稍有等待容忍
+baseA = RC_TAG + ":mjA:"
+jobsA = []
+for(i in 1..CROSS){
+    jobsA.append!( submitJob("rc_bs_mj_ok_"+string(i), "", bsJob, conn_ok2, baseA + string(i)+":", 500, NT) )
+}
+/* 均应成功，无异常；并检查近作业无错误信息 */
+retsA = []
+for(j in jobsA){ retsA.append!(getJobReturn(j, true)) }
+errs = exec errorMsg from getRecentJobs() where jobId like "rc_bs_mj_ok_%"
+assert 1, isNull(errs)
+/* 抽样校验一组 key 已被写入 */
+chk = [ baseA + "1:" + "1", baseA + "2:" + "250", baseA + "3:" + "500" ]
+mgA = redisCluster::run(conn_ok2, RC_TAG, concat!(["MGET"], chk))
+assert 2, not any(isNull(mgA))
+
+/* 情况B：池不足（跨作业总并发需求 > poolSize）——应失败 */
+@testing:case="rc_bs_multi_job_pool_insufficient", exception=1
+CROSS_B = 4
+NT_B    = 2
+POOL_BAD= 5         // 需求=4*2=8，实际池=5，不足；并将 wait_timeout 设为 0 迅速失败
+conn_bad = redisCluster::connect(RC_HOST, RC_PORT, RC_PASS, POOL_BAD, 0)
+baseB = RC_TAG + ":mjB:"
+jobsB = []
+for(i in 1..CROSS_B){
+    jobsB.append!( submitJob("rc_bs_mj_bad_"+string(i), "", bsJob, conn_bad, baseB + string(i)+":", 600, NT_B) )
+}
+/* 期望：至少一个作业在 getJobReturn 时抛异常 */
+for(j in jobsB){ getJobReturn(j, true) }
+
+/*******************************
+4) 大数据量（fast array）压力
+   - 仅用 batchSet；校验抽样
+   - huge array 建议用“分块多次 batchSet”替代单次巨量向量
+*******************************/
+@testing:case="rc_bs_big_fast_array_ok"
+conn_big = redisCluster::connect(RC_HOST, RC_PORT, RC_PASS, 8, 100)
+N = 200000                      // 20万条，fast array 场景
+ks_big = RC_TAG + ":big:" + string(1..N)
+vs_big = "b" + string(1..N)
+retBig = redisCluster::batchSet(conn_big, ks_big, vs_big, 1024, 3)
+assert 1, eqObj("batchSet finish.", retBig)
+/* 抽样验证 */
+mgBig = redisCluster::run(conn_big, RC_TAG, ["MGET", ks_big[1], ks_big[10000], ks_big[N]])
+assert 2, eqObj([vs_big[1], vs_big[10000], vs_big[N]], mgBig)
+
+/* 可选：等价“huge数据量”分块写（避免一次性 huge array）
+   注：将 TOTAL 拉大（如数百万/上千万），分块 batchSet 即可覆盖海量稳定性 */
+@testing:case="rc_bs_huge_like_chunked_ok"
+conn_huge = redisCluster::connect(RC_HOST, RC_PORT, RC_PASS, 10, 100)
+TOTAL = 1000000                 // 100万，示例；可按环境上调
+CHUNK = 200000                  // 分 5 块
+for(beg in 1..TOTAL step CHUNK){
+    end = min(TOTAL, beg + CHUNK - 1)
+    ks_h = RC_TAG + ":huge:" + string(beg..end)
+    vs_h = "h" + string(beg..end)
+    r = redisCluster::batchSet(conn_huge, ks_h, vs_h, 2048, 4)
+    assert 1, eqObj("batchSet finish.", r)
+}
+/* 抽样验证首尾 */
+mgH = redisCluster::run(conn_huge, RC_TAG, ["MGET", RC_TAG + ":huge:1", RC_TAG + ":huge:" + string(TOTAL)])
+assert 2, not any(isNull(mgH))
+
+说明与对照：
+- 多次调用同一接口：rc_bs_repeat_ok 用同一把连接反复 batchSet，最终值一致。
+- 多线程并发（单作业）：rc_bs_single_job_pool_insufficient 将 numThreads 设为 4 且 poolSize=2、wait_timeout=0，稳定触发失败（exception=1）。
+- 多线程并发（跨作业 submitJob）：
+  - rc_bs_multi_job_pool_enough：CROSS=3，NT=2，poolSize=3*2+2=8，全部成功，并检查近期作业无错误。
+  - rc_bs_multi_job_pool_insufficient：CROSS=4，NT=2，poolSize=5<8，且 wait_timeout=0，getJobReturn 抛异常（exception=1）。
+- 大数据量测试：给出 fast array 的一次性大向量写入；huge array 建议用“分块多次 batchSet”达到相同负载与稳定性验证目的，避免在通用回归中构造真实 huge 向量导致资源占用失控。
+
+备注：
+- 以上脚本对 Redis 环境无破坏性（覆盖写同一前缀），各 case 使用不同 key 前缀避免相互干扰。
+- 如果现场环境更激进，可把 CROSS、NT、TOTAL 上调；当出现偶发等待导致“池不足”仍成功时，把连接 wait_timeout 设为 0，可稳定复现异常。
+Click to add a cell.

@@ -1,0 +1,505 @@
+login("admin","123456")
+
+try{ loadPlugin("redisCluster") } catch(ex){ print(ex) }
+try{ loadPlugin("path/to/PluginRedisCluster.txt") } catch(ex){ print(ex) }
+
+ip="redis1"
+port=6379
+password=""
+
+RC_TAG  = "{rc:ut}"
+
+/** 1. 参数校验测试 */
+
+/* pluginInfo */
+@testing:case="rc_pluginInfo_with_arg", syntaxError=1
+info = redisCluster::pluginInfo(1)
+
+/* connect */
+@testing:case="rc_connect_full"
+ret = redisCluster::connect(ip, port, password, 2, 500)
+token = (exec token from redisCluster::getHandleStatus() order by createdTime desc)[0]
+conn = redisCluster::getHandle(token)
+assert 1, eqObj(ret, conn)
+
+@testing:case="rc_connect_extra_args", syntaxError=1
+ret = redisCluster::connect(ip, port, password, 2, 1000, 1, 2)
+
+@testing:case="rc_connect_default"
+ret = redisCluster::connect(ip, port)
+token = (exec token from redisCluster::getHandleStatus() order by createdTime desc)[0]
+conn = redisCluster::getHandle(token)
+assert 1, eqObj(ret, conn)
+
+@testing:case="rc_connect_password_skipped"
+ret = redisCluster::connect(ip, port, , 3)
+token = (exec token from redisCluster::getHandleStatus() order by createdTime desc)[0]
+conn = redisCluster::getHandle(token)
+assert 1, eqObj(ret, conn)
+
+@testing:case="rc_connect_host_int", exception=1
+redisCluster::connect(1, 6379)
+
+@testing:case="rc_connect_port_string", exception=1
+redisCluster::connect(ip, "6379")
+
+@testing:case="rc_connect_password_wrong", exception=1
+redisCluster::connect(ip, port, "wrong_password")
+
+@testing:case="rc_connect_pool_not_int", exception=1
+redisCluster::connect(ip, port, password, "3")
+
+@testing:case="rc_connect_waitTimeoutMs_not_int", exception=1
+redisCluster::connect(ip, port, password, 3, "1000")
+
+/* release / releaseAll / getHandle / getHandleStatus */
+@testing:case="rc_release_arg_not_handle", exception=1
+redisCluster::release(1)
+redisCluster::release("1")
+
+@testing:case="rc_releaseAll_with_args", syntaxError=1
+redisCluster::releaseAll(1)
+redisCluster::releaseAll("1")
+
+@testing:case="rc_getHandle_handle_not_string", exception=1
+redisCluster::getHandle(1)
+
+@testing:case="rc_getHandle_handle_inexistent", exception=1
+redisCluster::getHandle("inexistent_token")
+
+@testing:case="rc_getHandleStatus_with_arg", syntaxError=1
+redisCluster::getHandleStatus(1)
+redisCluster::getHandleStatus("1")
+
+/* run */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_run_routeKey_not_string", exception=1
+redisCluster::run(conn, 2, ["PING"])
+
+@testing:case="rc_run_cmd_not_vector", exception=1
+redisCluster::run(conn, "tag=ut", "PING")
+
+@testing:case="rc_run_cmd_vector_not_string", exception=1
+redisCluster::run(conn, "key:ut", [1,2])
+
+@testing:case="rc_run_cmd_vector_len_over_4096", exception=1
+vec = take("x", 4097)
+vec[0] = "PING"
+redisCluster::run(conn, "tag=ut", vec)
+
+/* set / get */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_set_no_kv_args", syntaxError=1
+redisCluster::set(conn)
+
+@testing:case="rc_set_key_not_string", exception=1
+redisCluster::set(conn, 2, "v")
+
+@testing:case="rc_set_key_not_scalar", exception=1
+redisCluster::set(conn, ["k1", "k2"], "v")
+
+@testing:case="rc_set_val_not_string", exception=1
+redisCluster::set(conn, "k", 2)
+
+@testing:case="rc_set_ttl_not_int", exception=1
+redisCluster::set(conn, "k", "v", "1")
+
+@testing:case="rc_get_key_not_string", exception=1
+redisCluster::get(conn, 2)
+
+@testing:case="rc_get_key_not_scalar", exception=1
+redisCluster::get(conn, ['k1', 'k2'])
+
+/* batchSet */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchSet_keys_not_vector", exception=1
+redisCluster::batchSet(conn, "k", ["v"])
+
+@testing:case="rc_batchSet_vals_not_vector", exception=1
+redisCluster::batchSet(conn, ["k"], "v")
+
+@testing:case="rc_batchSet_len_mismatch", exception=1
+redisCluster::batchSet(conn, ["k1","k2"], ["v1"])
+
+/* batchGet */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchGet_keys_not_string_vec", exception=1
+redisCluster::batchGet(conn, [1,2,3])
+
+/* batchHashSet */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchHashSet_ids_not_string_vec", exception=1
+t1 = table(`a`b as x, `1`2 as y)
+redisCluster::batchHashSet(conn, 2, t1)
+
+@testing:case="rc_batchHashSet_not_table", exception=1
+redisCluster::batchHashSet(conn, ["k1"], 1)
+
+@testing:case="rc_batchHashSet_row_mismatch", exception=1
+t2 = table(`f1`f2 as c1, `a`b as f1, `c`d as f2)
+redisCluster::batchHashSet(1, ["k1","k2","k3"], t2)
+
+/* batchPush */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchPush_keys_not_string_vec", exception=1
+redisCluster::batchPush(conn, 2, [["a"]])
+
+@testing:case="rc_batchPush_vals_not_nested_vec", exception=1
+redisCluster::batchPush(conn, ["k1"], "a")
+
+@testing:case="rc_batchPush_inner_not_string", exception=1
+redisCluster::batchPush(conn, ["k1"], [[1,2]])
+
+@testing:case="rc_batchPush_len_mismatch", exception=1
+redisCluster::batchPush(conn, ["k1","k2"], [ ["a","b"] ])
+
+@testing:case="rc_batchPush_rightPush_not_bool", exception=1
+redisCluster::batchPush(conn, ["k1"], [["a"]], "true")
+
+@testing:case="rc_batchPush_batchWin_not_int", exception=1
+redisCluster::batchPush(conn, ["k1"], [["a"]], true, "10")
+
+@testing:case="rc_batchPush_numThreads_not_int", exception=1
+redisCluster::batchPush(conn, ["k1"], [["a"]], true, 10, "2")
+
+/* batchDel */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchDel_keys_not_string_vec", exception=1
+redisCluster::batchDel(conn, 2)
+
+@testing:case="rc_batchDel_batchWin_not_int", exception=1
+redisCluster::batchDel(conn, ["k1"], "10")
+
+@testing:case="rc_batchDel_numThreads_not_int", exception=1
+redisCluster::batchDel(conn, ["k1"], 10, "2")
+
+@testing:case="rc_batchDel_useUnlink_not_bool", exception=1
+redisCluster::batchDel(conn, ["k1"], 10, 1, "true")
+
+redisCluster::releaseAll()
+
+/** 2. 环境测试 */
+
+/* pluginInfo */
+@testing:case="rc_pluginInfo_fields"
+info = redisCluster::pluginInfo()
+assert 1, eqObj(info["pluginName"], "redisCluster")
+assert 2, eqObj(info["pluginVersion"], "3.00.4.0")
+assert 3, info["feature"] == "AutomaticRouting,Pipeline,Multithreading"
+
+/* connect */
+@testing:case="rc_connect_valid"
+conn = redisCluster::connect(ip, port, password, 2, 1000)
+assert 1, eqObj(type(conn), 24)
+
+/* release / releaseAll / getHandle / getHandleStatus */
+@testing:case="rc_release_valid", exception=1
+conn = redisCluster::connect(ip, port, password)
+redisCluster::release(conn)
+redisCluster::get(conn, "{key}");
+
+@testing:case="rc_releaseAll_valid"
+conn = redisCluster::connect(ip, port, password)
+redisCluster::releaseAll()
+ret = redisCluster::getHandleStatus()
+assert 1, eqObj(ret.size(), 0)
+
+@testing:case="rc_getHandle_valid"
+conn = redisCluster::connect(ip, port, password)
+token = (exec token from redisCluster::getHandleStatus() order by createdTime desc)[0]
+conn1 = redisCluster::getHandle(token)
+assert 1, eqObj(conn, conn1)
+assert 2, eqObj(type(conn1), 24)
+
+@testing:case="rc_getHandleStatus_valid"
+redisCluster::releaseAll()
+assert 1, eqObj(redisCluster::getHandleStatus().size(), 0)
+conn = redisCluster::connect(ip, port, password)
+assert 2, eqObj(redisCluster::getHandleStatus().size(), 1)
+conn1 = redisCluster::connect(ip, port, password)
+assert 3, eqObj(redisCluster::getHandleStatus().size(), 2)
+tbl = redisCluster::getHandleStatus()
+assert 3, eqObj(schema(tbl).colDefs.name, `token`address`createdTime)
+
+/* run */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_run_ping_status"
+ret1 = redisCluster::run(conn, "tag:rc:ut", ["PING"])
+ret2 = redisCluster::run(conn, "tag=rc:ut", ["PING"])
+ret3 = redisCluster::run(conn, "key=rc:ut", ["PING"])
+ret4 = redisCluster::run(conn, "key:rc:ut", ["PING"])
+ret5 = redisCluster::run(conn, "rc:ut", ["PING"])
+
+assert 1, eqObj("PONG", ret1)
+assert 2, eqObj("PONG", ret2)
+assert 3, eqObj("PONG", ret3)
+assert 4, eqObj("PONG", ret4)
+assert 5, eqObj("PONG", ret5)
+
+@testing:case="rc_run_integer_and_array"
+ck = RC_TAG + ":cnt"
+redisCluster::run(conn, RC_TAG, ["DEL", ck])
+ret1 = redisCluster::run(conn, RC_TAG, ["INCR", ck])
+assert 1, ret1 >= 1
+redisCluster::run(conn, RC_TAG, ["DEL", RC_TAG + ":list1"])
+redisCluster::run(conn, RC_TAG, ["RPUSH", RC_TAG + ":list1", "a", "b", "c"])
+arr = redisCluster::run(conn, RC_TAG, ["LRANGE", RC_TAG + ":list1", "0", "-1"])
+arrForCheck = array(ANY, 3)
+arrForCheck[0] = `a
+arrForCheck[1] = `b
+arrForCheck[2] = `c
+assert 2, eqObj(arrForCheck, arr)
+
+/* set / get */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_set_valid"
+ret1 = redisCluster::set(conn, "k", "v")
+ret2 = redisCluster::set(conn, "k", "v", 10000)
+assert 1, eqObj(ret1, "OK")
+assert 2, eqObj(ret2, "OK")
+
+@testing:case="rc_get_valid"
+redisCluster::set(conn, "k", "v")
+ret = redisCluster::get(conn, "k")
+assert 1, eqObj(ret, "v")
+
+@testing:case="rc_set_get_ok_and_ttl"
+k = RC_TAG + ":kv1"
+redisCluster::set(conn, k, "v1")
+v = redisCluster::get(conn, k)
+assert 1, eqObj("v1", v)
+redisCluster::set(conn, k, "v2", 1)
+sleep(1500)
+v2 = redisCluster::get(conn, k)
+assert 2, isNull(v2)
+
+@testing:case="rc_get_wrongtype_exception", exception=1
+hk = RC_TAG + ":h1"
+redisCluster::run(conn, RC_TAG, ["HSET", hk, "f", "x"])
+redisCluster::get(conn, hk)
+
+/* batchSet */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchSet_scalar_scalar"
+redisCluster::batchSet(conn, RC_TAG + ":kss", "vss")
+assert 1, eqObj("vss", redisCluster::get(conn, RC_TAG + ":kss"))
+
+@testing:case="rc_batchSet_vector_valid"
+ks = RC_TAG + ":k:" + string(1..10)
+vs = "v" + string(1..10)
+ret = redisCluster::batchSet(conn, ks, vs, 128, 2)
+assert 1, eqObj("batchSet finish.", ret)
+vg = redisCluster::batchGet(conn, ks)
+assert 2, eqObj(vs, vg)
+
+/* batchGet */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchGet_mixed_null_flag"
+ks = RC_TAG + ":k:1"
+vs = "v1"
+ret = redisCluster::batchSet(conn, ks, vs, 128, 2)
+assert 1, eqObj('OK', ret)
+ks2 = [RC_TAG + ":k:1", RC_TAG + ":notExist"]
+vg2 = redisCluster::batchGet(conn, ks2)
+assert 2, eqObj("v1", vg2[0])
+assert 3, isNull(vg2[1])
+
+/* batchHashSet */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchHashSet_valid"
+ids = RC_TAG + ":h:" + string(1..3)
+t = table(`f1`f2`f3 as name, `a`b`c as f1, `x`y`z as f2)
+ret = redisCluster::batchHashSet(conn, ids, t, 64, 2)
+assert 1, eqObj("batchHashSet finish.", ret)
+hg = redisCluster::run(conn, RC_TAG, ["HGETALL", ids[0]])
+hgForCheck = array(ANY, 6)
+hgForCheck[0] = `name
+hgForCheck[1] = `f1
+hgForCheck[2] = `f1
+hgForCheck[3] = `a
+hgForCheck[4] = `f2
+hgForCheck[5] = `x
+assert 2, eqObj(hgForCheck, hg)
+
+/* batchPush */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchPush_rpush_ok"
+klist = [RC_TAG + ":lp:1", RC_TAG + ":lp:2"]
+vlist = [ ["a","b"], ["c","d","e"] ]
+redisCluster::batchDel(conn, klist)
+ret = redisCluster::batchPush(conn, klist, vlist, true, 64, 2)
+assert 1, eqObj("batchPush finish.", ret)
+r1 = redisCluster::run(conn, RC_TAG, ["LRANGE", klist[0], "0", "-1"])
+r2 = redisCluster::run(conn, RC_TAG, ["LRANGE", klist[1], "0", "-1"])
+r1ForCheck = array(ANY, 2)
+r1ForCheck[0] = `a
+r1ForCheck[1] = `b
+r2ForCheck = array(ANY, 3)
+r2ForCheck[0] = `c
+r2ForCheck[1] = `d
+r2ForCheck[2] = `e
+assert 2, eqObj(r1ForCheck, r1)
+assert 3, eqObj(r2ForCheck, r2)
+
+@testing:case="rc_batchPush_lpush_ok"
+klist2 = [RC_TAG + ":lp:3"]
+vlist2 = [ ["x","y"] ]
+redisCluster::batchDel(conn, klist2)
+redisCluster::batchPush(conn, klist2, vlist2, false)
+r3 = redisCluster::run(conn, RC_TAG, ["LRANGE", klist2[0], "0", "-1"])
+r3ForCheck = array(ANY, 2)
+r3ForCheck[0] = `y
+r3ForCheck[1] = `x
+assert 1, eqObj(r3ForCheck, r3)
+
+/* batchDel */
+conn = redisCluster::connect(ip, port, password)
+
+@testing:case="rc_batchDel_unlink_valid"
+ksd = RC_TAG + ":del:" + string(1..5)
+redisCluster::batchSet(conn, ksd, take("x",5))
+ret = redisCluster::batchDel(conn, ksd, 64, 2, true)
+assert 1, eqObj("batchDel finish.", ret)
+vdel = redisCluster::batchGet(conn, ksd)
+assert 2, all(isNull(vdel))
+
+@testing:case="rc_batchDel_del_valid"
+ksd2 = RC_TAG + ":del:" + string(6..10)
+redisCluster::batchSet(conn, ksd2, take("y",5))
+ret = redisCluster::batchDel(conn, ksd2, 64, 2, false)
+assert 1, eqObj("batchDel finish.", ret)
+vdel2 = redisCluster::batchGet(conn, ksd2)
+assert 2, all(isNull(vdel2))
+
+redisCluster::releaseAll()
+
+/** 3. 多次调用一致性测试 */
+conn = redisCluster::connect(ip, port, password)
+
+/* run 多次 INCRBY 一致性 */
+@testing:case="test_rc_repeat_run_incrby_consistency"
+rk = "{rc:repeat:ctr}"
+ctrKey = "rc:test:"+rk+":ctr"
+redisCluster::run(conn, rk, ["DEL", ctrKey])
+times = 100
+for(i in 1..times){ redisCluster::run(conn, rk, ["INCRBY", ctrKey, "1"]) }
+finalVal = redisCluster::run(conn, rk, ["GET", ctrKey])
+assert 1, eqObj(finalVal, string(times))
+
+/* set/get */
+@testing:case="test_rc_repeat_set_get_consistency"
+rk = "{rc:repeat}"
+k  = "rc:test:"+rk+":kv"
+v  = "hello-redis-cluster"
+for(i in 1..10){ redisCluster::set(conn, k, v) }
+got = redisCluster::get(conn, k)
+assert 1, eqObj(got, v)
+
+/* batchSet/batchGet */
+@testing:case="test_rc_repeat_batchSet_bathGet_consistency"
+n = 1000
+rk = "{rc:repeat:single}"
+keys = take("rc:test:"+rk+":k", n) + string(1..n)
+vals = take("v", n) + string(1..n)
+for(i in 1..3){ redisCluster::batchSet(conn, keys, vals, 2048, 1) }
+re = redisCluster::batchGet(conn, keys)
+assert 1, eqObj(vals, re)
+
+/* batchPush 多次 RPUSH一致性（校验 LLEN）*/
+@testing:case="test_rc_repeat_batchPush_consistency"
+rk = "{rc:repeat:list}"
+listKey = "rc:test:"+rk+":lst"
+redisCluster::run(conn, rk, ["DEL", listKey])
+keys = [listKey]
+vals = [ ["a","b","c","d","e"] ]
+for(i in 1..3){ redisCluster::batchPush(conn, keys, vals, true, 2048, 1) }
+llen = redisCluster::run(conn, rk, ["LLEN", listKey])
+assert 1, eqObj(llen, 15)
+
+redisCluster::releaseAll()
+
+/** 4. 多线程并发调用测试 */
+
+/* 单作业并发 + 池不足（单作业内 numThreads > poolSize; waitTimeoutMs 1ms 过小），失败 */
+@testing:case="rc_bs_single_job_pool_insufficient_small_waittimeoutms", exception=1
+conn = redisCluster::connect(ip, port, password, 2, 1)
+ks_s = RC_TAG + ":sj:" + string(1..2048)
+vs_s = "s" + string(1..2048)
+//redisCluster::batchDel(conn, ks_s)
+redisCluster::batchSet(conn, ks_s, vs_s, 2048, 4)
+
+/* 单作业并发 + 池不足（单作业内 numThreads > poolSize; 但waitTimeoutMs 100ms 足够），成功 */
+@testing:case="rc_bs_single_job_pool_insufficient_enough_waittimeoutms"
+conn = redisCluster::connect(ip, port, password, 2, 100)
+ks_s = RC_TAG + ":sj:" + string(1..200)
+vs_s = "s" + string(1..200)
+ret1 = redisCluster::batchSet(conn, ks_s, vs_s, 256, 4)
+assert 1, eqObj("batchSet finish.", ret1)
+gv1 = redisCluster::batchGet(conn, ks_s)
+assert 2, eqObj(vs_s, gv1)
+
+/* 单作业并发 + 池足（单作业内 numThreads < poolSize），成功 */
+@testing:case="rc_bs_single_job_pool_sufficient"
+conn = redisCluster::connect(ip, port, password, 5, 1)
+ks_s = RC_TAG + ":sj:" + string(1..200)
+vs_s = "s" + string(1..200)
+ret2 = redisCluster::batchSet(conn, ks_s, vs_s, 256, 4)
+assert 1, eqObj("batchSet finish.", ret2)
+gv2 = redisCluster::batchGet(conn, ks_s)
+assert 2, eqObj(vs_s, gv2)
+
+def bsJob(conn, base, n, nt){
+    ks = base + string(1..n)
+    vs = "p" + string(1..n)
+    /* 仅 batchSet，batchWin 适中，强调并发线程 nt */
+    redisCluster::batchSet(conn, ks, vs, 256, nt)
+}
+
+/* 跨作业并发 + 池足，满足 poolSize ≥ (跨作业并发数 × 单作业 numThreads + 2)，成功 */
+@testing:case="rc_bs_multi_job_pool_enough"
+CROSS   = 3   // 跨作业并发数
+NT      = 2   // 单作业 numThreads
+POOL_OK = CROSS * NT + 2
+conn_ok2 = redisCluster::connect(ip, port, password, POOL_OK, 1)  // 稍有等待容忍
+baseA = RC_TAG + ":mjA:"
+jobsA = []
+for(i in 1..CROSS){
+    jobsA.append!( submitJob("rc_bs_mj_ok_"+string(i), "", bsJob, conn_ok2, baseA + string(i)+":", 500, NT) )
+}
+
+retsA = []
+for(j in jobsA){ retsA.append!(getJobReturn(j, true)) }
+errs = exec errorMsg from getRecentJobs() where jobId like "rc_bs_mj_ok_%"
+assert 1, isNull(errs)
+
+chk = [ baseA + "1:" + "1", baseA + "2:" + "250", baseA + "3:" + "500" ]
+mgA = redisCluster::run(conn_ok2, RC_TAG, join(["MGET"], chk))
+assert 2, not any(isNull(mgA))
+
+/* 跨作业并发 + 池不足（跨作业总并发需求 > poolSize），失败 */
+@testing:case="rc_bs_multi_job_pool_insufficient", exception=1
+CROSS_B = 4
+NT_B    = 2
+POOL_BAD= 5         // 需求=4*2=8，实际池=5，不足；并将 wait_timeout 设为 0 迅速失败
+conn_bad = redisCluster::connect(ip, port, password, POOL_BAD, 1)  // 稍有等待容忍
+baseB = RC_TAG + ":mjB:"
+jobsB = []
+for(i in 1..CROSS_B){
+    jobsB.append!( submitJob("rc_bs_mj_bad_"+string(i), "", bsJob, conn_bad, baseB + string(i)+":", 600, NT_B) )
+}
+for(j in jobsB){ getJobReturn(j, true) }
+
+redisCluster::releaseAll()

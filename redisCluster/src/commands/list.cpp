@@ -100,6 +100,7 @@ ddb::ConstantSP ddb_rc_batchPush(ddb::Heap*, const std::vector<ConstantSP>& args
     rc::ListService svc(cf);
     try {
         svc.batchPush(keys, vals, rightPush, numThreads);
+        return new ddb::String("batchPush finish.");
     } catch (const std::exception& e) {
         throw RuntimeException(std::string("[Plugin::RedisCluster] batchPush failed: ") + e.what());
     }

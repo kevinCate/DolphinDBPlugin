@@ -8,6 +8,6 @@
 
 ddb::ConstantSP ddb_rc_batchGet(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 ddb::ConstantSP ddb_rc_batchHashSet(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
-ddb::ConstantSP ddb_rc_deleteKeys(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
+ddb::ConstantSP ddb_rc_batchDel(ddb::Heap*, const std::vector<ddb::ConstantSP>&);
 
 #endif //HASH_BATCH_H

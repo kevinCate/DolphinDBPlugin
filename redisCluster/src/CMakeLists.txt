@@ -40,3 +40,14 @@ target_compile_definitions(${PluginName} PRIVATE
         LOCKFREE_SYMBASE
         _GLIBCXX_USE_CXX11_ABI=0
 )
+
+target_compile_definitions(${PluginName} PRIVATE
+        PLUGIN_RC_NAME=\"redisCluster\"
+        PLUGIN_RC_VERSION=\"3.00.4.0\"
+        PLUGIN_RC_SERVER_VERSION=\"3.00.4\"
+        PLUGIN_RC_OPEN_SOURCE=0
+        PLUGIN_RC_REPO_URL=\"https://dolphindb.com/redisCluster\"
+        PLUGIN_RC_IS_FREE=1
+        PLUGIN_RC_IS_FREE_COMMERCIAL=1
+        PLUGIN_RC_FEATURE=\"AutomaticRouting,Pipeline,Multithreading\"
+)
