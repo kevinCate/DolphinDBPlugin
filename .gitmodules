@@ -7,3 +7,9 @@
 [submodule "RTSeis/rtseis"]
 	path = RTSeis/rtseis
 	url = https://github.com/uofuseismo/rtseis.git
+[submodule "redisCluster/contrib/hiredis"]
+	path = redisCluster/contrib/hiredis
+	url = https://github.com/redis/hiredis.git
+[submodule "redisCluster/contrib/redis-plus-plus"]
+	path = redisCluster/contrib/redis-plus-plus
+	url = https://github.com/sewenew/redis-plus-plus.git

@@ -52,3 +52,7 @@ WebSocket
 XTP
 hdb
 
+
+# Local junk (Baidu Netdisk sync, macOS)
+*.baiduyun.uploading.cfg
+.DS_Store
